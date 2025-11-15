@@ -1,0 +1,9 @@
+.signup-card { max-width:440px; margin:40px auto; padding:20px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.08); background:#fff; }
+.signup-form label { display:block; margin-bottom:12px; font-size:0.95rem; }
+.signup-form input { width:100%; padding:10px; margin-top:6px; box-sizing:border-box; border:1px solid #dcdcdc; border-radius:6px; }
+.pw-requirements ul { margin:6px 0 12px 18px; padding:0; }
+.pw-requirements li.ok { color: #106e3c; } /* green-ish */
+.pw-requirements li.bad { color: #a00; }
+.error { color:#b00020; margin:12px 0; }
+.success { color:#0b7a3f; margin:12px 0; }
+button[disabled] { opacity:0.6; cursor:wait; }
