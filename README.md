@@ -38,7 +38,6 @@ Password Health Tracker is a web application designed to help users monitor and 
 ## Getting Started
 
 ### Clone the repository
-
 git clone https://github.com/Davide1809/Password-Health-Tracker.git
 cd Password-Health-Tracker
 
