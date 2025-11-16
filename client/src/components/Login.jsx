@@ -15,7 +15,7 @@ export default function Login() {
     setError(null);
 
     if (!validateEmail(email)) {
-      setError("Please enter a valid email.");
+      setError("Please enter a valid email address.");
       return;
     }
 
@@ -29,22 +29,28 @@ export default function Login() {
       const res = await fetch("http://127.0.0.1:5001/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ email: email.toLowerCase().trim(), password }),
       });
 
       const body = await res.json();
-
       if (!res.ok) {
-        setError(body.message || "Login failed.");
+        setError(body.message || "Login failed. Please try again.");
         setLoading(false);
         return;
       }
 
+      // ✅ Only access localStorage in the browser
+      if (typeof window !== "undefined") {
+        localStorage.setItem("userEmail", email);
+      }
+
       setSuccessMsg("Login successful! Redirecting…");
-      setTimeout(() => navigate("/dashboard"), 900);
+      setTimeout(() => {
+        navigate("/dashboard");
+      }, 900);
     } catch (err) {
-      setError("Network error.");
+      console.error("Login error:", err);
+      setError("Network error. Please try again later.");
     } finally {
       setLoading(false);
     }
@@ -53,20 +59,36 @@ export default function Login() {
   return (
     <div className="login-card">
       <h2>Login</h2>
-      <form onSubmit={handleSubmit}>
-        <label>Email</label>
-        <input type="email" value={email}
-               onChange={(e) => setEmail(e.target.value)} />
+      <form onSubmit={handleSubmit} className="login-form" noValidate>
+        <label>
+          Email
+          <input
+            type="email"
+            name="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            required
+          />
+        </label>
 
-        <label>Password</label>
-        <input type="password" value={password}
-               onChange={(e) => setPassword(e.target.value)} />
+        <label>
+          Password
+          <input
+            type="password"
+            name="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter your password"
+            required
+          />
+        </label>
 
-        {error && <p className="error">{error}</p>}
-        {successMsg && <p className="success">{successMsg}</p>}
+        {error && <div className="error">{error}</div>}
+        {successMsg && <div className="success">{successMsg}</div>}
 
         <button type="submit" disabled={loading}>
-          {loading ? "Logging in..." : "Log In"}
+          {loading ? "Logging in…" : "Log in"}
         </button>
       </form>
     </div>
