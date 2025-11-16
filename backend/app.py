@@ -1,5 +1,4 @@
-import os
-import re
+import os, re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
@@ -11,24 +10,17 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "supersecretkey")
 CORS(app, supports_credentials=True)
 
-# ----------------------------
-# Login Manager Setup
-# ----------------------------
+# Login manager
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = "login"
 
-# ----------------------------
-# MongoDB Connection
-# ----------------------------
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+# MongoDB
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017/myapp")
 client = MongoClient(MONGO_URI)
 db = client["myapp"]
 users = db["users"]
 
-# ----------------------------
-# User Class
-# ----------------------------
+# User class
 class User(UserMixin):
     def __init__(self, user_doc):
         self.id = str(user_doc["_id"])
@@ -41,9 +33,7 @@ def load_user(user_id):
         return User(user_doc)
     return None
 
-# ----------------------------
-# Validation
-# ----------------------------
+
 EMAIL_REGEX = r"^[\w\.-]+@[\w\.-]+\.\w+$"
 
 def valid_password(password):
@@ -55,15 +45,13 @@ def valid_password(password):
         re.search(r"[!@#$%^&*(),.?\":{}|<>]", password)
     )
 
-# ----------------------------
-# Signup Route
-# ----------------------------
+
 @app.post("/api/signup")
 def signup():
     data = request.get_json()
 
     if not data or "email" not in data or "password" not in data:
-        return jsonify({"status": "error", "message": "Email and password are required"}), 422
+        return jsonify({"status": "error", "message": "Email and password required"}), 422
 
     email = data["email"].strip().lower()
     password = data["password"]
@@ -79,18 +67,13 @@ def signup():
 
     hashed_pw = generate_password_hash(password)
     result = users.insert_one({"email": email, "password": hashed_pw})
-
-    return jsonify({"status": "success", "message": "Account created successfully", "userId": str(result.inserted_id)}), 201
-
-# ----------------------------
-# Login Route
-# ----------------------------
+    return jsonify({"status": "success", "message": "Account created", "userId": str(result.inserted_id)}), 201
 @app.post("/api/login")
 def login():
     data = request.get_json()
 
     if not data or "email" not in data or "password" not in data:
-        return jsonify({"status": "error", "message": "Email and password are required"}), 422
+        return jsonify({"status": "error", "message": "Email and password required"}), 422
 
     email = data["email"].strip().lower()
     password = data["password"]
@@ -104,22 +87,16 @@ def login():
 
     return jsonify({"status": "success", "message": "Login successful"}), 200
 
-# ----------------------------
-# Logout Route
-# ----------------------------
+
 @app.post("/api/logout")
 @login_required
 def logout():
     logout_user()
-    return jsonify({"status": "success", "message": "Logged out successfully"}), 200
-
-# ----------------------------
-# Protected Dashboard Route
-# ----------------------------
+    return jsonify({"status": "success", "message": "Logged out"}), 200
 @app.get("/api/dashboard")
 @login_required
-def dashboard():
+def dashboard_data():
     return jsonify({"status": "success", "message": f"Welcome {current_user.email}!"}), 200
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    app.run(host="0.0.0.0", port=5001)

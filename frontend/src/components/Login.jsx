@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { validateEmail } from "../utils/validators";
 import { useNavigate } from "react-router-dom";
+import { BACKEND_URL } from "../config";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -26,10 +27,10 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:5001/api/login", {
+      const res = await fetch(`${BACKEND_URL}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.toLowerCase().trim(), password }),
+        body: JSON.stringify({ email, password }),
       });
 
       const body = await res.json();

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { validateEmail, validatePassword, passwordRequirementsText } from "../utils/validators";
 import { useNavigate } from "react-router-dom";
+import { BACKEND_URL } from "../config";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -41,11 +42,11 @@ export default function Signup() {
 
     setLoading(true);
     try {
-  const res = await fetch("http://127.0.0.1:5001/api/signup", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ email: email.toLowerCase().trim(), password }),
-});
+      const res = await fetch(`${BACKEND_URL}/api/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.toLowerCase().trim(), password }),
+      });
 
   const body = await res.json();
   console.log("Response status:", res.status);
