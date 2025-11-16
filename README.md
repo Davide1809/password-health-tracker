@@ -153,3 +153,28 @@ How to Run the Frontend (React)
 cd frontend
 npm install
 npm start
+
+# Story 3 – Password Strength Analyzer
+
+**Description:** 
+Implement a password strength analyzer component that allows users to input a password and receive a strength evaluation. This ensures users can create strong and secure passwords.
+
+**Status:** Completed
+
+Components Added/Modified:
+	•	PasswordAnalyzer.jsx – Component to input and analyze password strength.
+	•	passwordStrength.js – Utility functions to calculate password strength.
+	•	App.js – Added route /analyze to render the PasswordAnalyzer component.
+	•	App.test.js – Updated tests to verify correct rendering of routes including the password analyzer.
+
+Acceptance Criteria:
+	1.	Users can navigate to /analyze.
+	2.	Users can input a password and click “Analyze.”
+	3.	Password strength is evaluated and displayed (Weak / Medium / Strong).
+	4.	Component renders correctly without breaking other routes.
+	5.	All unit and integration tests pass.
+
+Testing:
+	•	Used React Testing Library to ensure routing and component rendering works.
+	•	Verified password strength logic with passwordStrength.test.js.
+	•	All tests are passing as of this commit.
