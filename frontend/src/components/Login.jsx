@@ -1,108 +1,110 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-// Funzione di validazione dell'email (definita internamente per risolvere l'errore di importazione)
-function validateEmail(email) {
-  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return re.test(String(email).toLowerCase());
-}
+
+// *** Imposta l'URL del Backend Cloud Run ***
+// Assicurati che questo URL sia ESATTAMENTE quello del tuo servizio backend
+const BACKEND_URL = "https://password-backend-749522457256.us-central1.run.app"; 
 
 export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(null);
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [successMsg, setSuccessMsg] = useState(null);
 
-  async function handleSubmit(e) {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(null);
-
-    if (!validateEmail(email)) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-
-    if (!password) {
-      setError("Please enter your password.");
-      return;
-    }
-
+    setError("");
     setLoading(true);
+
     try {
-      // **CORREZIONE**: Aggiunta di credentials: 'include' per inviare i cookie di sessione
-      const res = await fetch("/api/login", {
+      // Usa l'URL COMPLETO del backend
+      const res = await fetch(`${BACKEND_URL}/api/login`, {
         method: "POST",
-        credentials: 'include', 
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ email, password }),
+        credentials: 'include', // Necessario per inviare il cookie
       });
 
-      const body = await res.json();
-      if (!res.ok) {
-        setError(body.message || "Login failed. Please try again.");
-        setLoading(false);
-        return;
-      }
-
-      // ✅ Only access localStorage in the browser
-      if (typeof window !== "undefined") {
+      if (res.ok) {
+        // Login avvenuto con successo, la sessione è stata stabilita dal backend
         localStorage.setItem("userEmail", email);
-      }
-
-      setSuccessMsg("Login successful! Redirecting…");
-      setTimeout(() => {
         navigate("/dashboard");
-      }, 900);
+      } else {
+        const data = await res.json();
+        setError(data.message || "Login failed. Check your credentials.");
+      }
     } catch (err) {
-      console.error("Login error:", err);
+      console.error("Login Network Error:", err);
       setError("Network error. Could not connect to the server.");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="login-card p-6 max-w-sm mx-auto bg-white rounded-xl shadow-lg space-y-4 m-8">
-      <h2 className="text-2xl font-bold text-gray-800 text-center">Login</h2>
-      <form onSubmit={handleSubmit} className="login-form space-y-4" noValidate>
-        <label className="block">
-          <span className="text-gray-700 font-medium">Email</span>
-          <input
-            type="email"
-            name="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            required
-            className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm shadow-sm placeholder-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-          />
-        </label>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      {/* ... (Il resto del codice di rendering del componente Login) ... */}
+      <div className="w-full max-w-md p-8 space-y-8 bg-white rounded-xl shadow-lg">
+        <h2 className="text-center text-3xl font-extrabold text-gray-900">
+          Sign in to your account
+        </h2>
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          <div className="rounded-md shadow-sm -space-y-px">
+            <div>
+              <label htmlFor="email-address" className="sr-only">Email address</label>
+              <input
+                id="email-address"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
+                placeholder="Email address"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="sr-only">Password</label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
 
-        <label className="block">
-          <span className="text-gray-700 font-medium">Password</span>
-          <input
-            type="password"
-            name="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            required
-            className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm shadow-sm placeholder-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-          />
-        </label>
+          {error && <p className="text-red-500 text-sm text-center">{error}</p>}
 
-        {error && <div className="p-2 text-red-700 bg-red-100 rounded-lg text-sm">{error}</div>}
-        {successMsg && <div className="p-2 text-green-700 bg-green-100 rounded-lg text-sm">{successMsg}</div>}
-
-        <button 
-          type="submit" 
-          disabled={loading}
-          className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50"
-        >
-          {loading ? "Logging in…" : "Log in"}
-        </button>
-      </form>
+          <div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+            >
+              {loading ? "Signing In..." : "Sign in"}
+            </button>
+          </div>
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => navigate('/signup')}
+              className="text-indigo-600 hover:text-indigo-500 text-sm font-medium"
+            >
+              Don't have an account? Sign Up
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

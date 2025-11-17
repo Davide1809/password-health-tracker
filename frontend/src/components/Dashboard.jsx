@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
+// *** Imposta l'URL del Backend Cloud Run ***
+// Assicurati che questo URL sia ESATTAMENTE quello del tuo servizio backend
+const BACKEND_URL = "https://password-backend-749522457256.us-central1.run.app"; 
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
@@ -10,14 +14,13 @@ export default function Dashboard() {
   // Funzione per gestire il logout
   const handleLogout = async () => {
     try {
-      // Invia il cookie per terminare la sessione lato server
-      const res = await fetch("/api/logout", {
+      // Usa l'URL COMPLETO del backend
+      const res = await fetch(`${BACKEND_URL}/api/logout`, { 
         method: "POST",
         credentials: 'include', 
       });
 
       if (res.ok) {
-        // Rimuove l'email locale e reindirizza
         localStorage.removeItem("userEmail");
         navigate("/login");
       } else {
@@ -31,19 +34,16 @@ export default function Dashboard() {
 
 
   useEffect(() => {
-    // Funzione per caricare i dati protetti
     const fetchDashboardData = async () => {
       setLoading(true);
       try {
-        // **CORREZIONE 1**: Usare il percorso relativo /api/dashboard
-        // **CORREZIONE 2**: Usare credentials: 'include' per inviare il cookie
-        const res = await fetch("/api/dashboard", {
+        // Usa l'URL COMPLETO del backend
+        const res = await fetch(`${BACKEND_URL}/api/dashboard`, {
           method: "GET",
           credentials: 'include', 
         });
 
         if (res.status === 401) {
-          // Non autorizzato (sessione scaduta o mancante). Reindirizza al login.
           console.log("Authentication failed, redirecting to login.");
           navigate("/login");
           return;
@@ -54,7 +54,7 @@ export default function Dashboard() {
         }
 
         const body = await res.json();
-        setData(body.message); // Qui dovrebbe esserci "Welcome [email]!"
+        setData(body.message);
         
       } catch (err) {
         console.error("Dashboard data error:", err);
@@ -99,7 +99,7 @@ export default function Dashboard() {
         <p className="text-lg text-gray-700 font-medium">{data}</p>
         
         <p className="text-sm text-gray-500">
-            This message is fetched from the protected Flask endpoint (/api/dashboard), 
+            This message is fetched from the protected Flask endpoint, 
             confirming that session authentication with cookies is now working correctly.
         </p>
 

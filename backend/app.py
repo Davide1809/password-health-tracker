@@ -1,131 +1,190 @@
-import os, re
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
-from pymongo import MongoClient
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from bson.objectid import ObjectId
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError, OperationFailure
+import os
+import secrets
+from zxcvbn import zxcvbn 
+from datetime import timedelta
 
+# 1. Configurazione Flask
 app = Flask(__name__)
-# Set a secret key from environment variables or use a default
-app.secret_key = os.getenv("SECRET_KEY", "supersecretkey") 
-CORS(app, supports_credentials=True)
+app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(16)) 
 
-# Login manager setup
+# --- CORREZIONE CRITICA PER LA GESTIONE DEI COOKIE/SESSIONE ---
+# 1.1 Configurazione sessione per HTTPS e Cross-Site
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
+app.config['SESSION_COOKIE_SECURE'] = True     # Manda il cookie solo via HTTPS
+app.config['SESSION_COOKIE_SAMESITE'] = 'None' # Consente l'invio cross-site (richiesto da Cloud Run)
+# ---------------------------------------------------------------
+
+# L'URL del tuo frontend (usato per CORS)
+# Puoi lasciarlo come "*" durante i test, ma per le credenziali è meglio specificarlo.
+# Dato che non ho l'URL esatto, uso un approccio più permissivo ma sicuro per i cookie:
+# Useremo il tuo URL noto per il frontend:
+FRONTEND_URL = "https://password-frontend-749522457256.us-central1.run.app"
+
+
+# 1.2 Configurazione CORS per accettare richieste dal frontend di Cloud Run
+CORS(
+    app, 
+    # Specifichiamo ESPLICITAMENTE l'URL del frontend per l'uso delle credenziali
+    resources={r"/api/*": {"origins": [FRONTEND_URL, "http://localhost:3000"]}}, 
+    supports_credentials=True, 
+    allow_headers=["Content-Type"],
+    methods=["GET", "POST", "PUT", "DELETE"]
+)
+
+# 2. Configurazione Flask-Login
 login_manager = LoginManager()
 login_manager.init_app(app)
 
-# MongoDB connection setup
-# Use the MONGO_URI environment variable set in docker-compose.yml
-# The default is a placeholder URI that works if the variable is not set.
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/db_placeholder")
-try:
-    # Initialize the client using the correct URI
-    client = MongoClient(MONGO_URI)
-    client.admin.command('ping') # Test connection
+# Variabili globali per il database
+db = None
+users = None
 
-    # Dynamically select the database name from the connection string
-    # Assumes the URI is in the format '.../db_name'
-    db_name = MONGO_URI.split('/')[-1]
-    db = client[db_name]
-    users = db["users"]
-    print(f"Successfully connected to MongoDB database: {db_name}")
-except Exception as e:
-    # Log the exact error if the connection fails, which is crucial for debugging
-    print(f"Error connecting to MongoDB. Check if the 'mongo' service is running and healthy: {e}")
-    # For local development with Docker Compose, the app may crash here if the DB is unavailable
-
-# User class for Flask-Login
+# Modello utente per Flask-Login
 class User(UserMixin):
-    def __init__(self, user_doc):
-        self.id = str(user_doc["_id"])
-        self.email = user_doc["email"]
+    def __init__(self, user_data):
+        # Conversione dell'ID Mongo ObjectId in stringa
+        self.id = str(user_data["_id"]) 
+        self.email = user_data["email"]
 
 @login_manager.user_loader
 def load_user(user_id):
-    try:
-        user_doc = users.find_one({"_id": ObjectId(user_id)})
-        if user_doc:
-            return User(user_doc)
-    except Exception as e:
-        print(f"Error loading user: {e}")
+    if users is not None:
+        user_data = users.find_one({"_id": user_id}) 
+        if user_data:
+            return User(user_data)
     return None
 
+# 3. Connessione MongoDB
+MONGO_URI = os.environ.get("MONGO_URI")
+if not MONGO_URI:
+    print("FATAL ERROR: MONGO_URI environment variable not set.")
+else:
+    try:
+        # Il client si autentica quando viene creata la prima connessione
+        client = MongoClient(MONGO_URI)
+        db = client.password_health 
+        users = db.users
+        # Tenta una connessione per verificare le credenziali immediatamente
+        client.admin.command('ping') 
+        print("MongoDB connection successful.")
+    except PyMongoError as e: 
+        print(f"MongoDB connection or operation failed: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred during DB connection: {e}")
 
-EMAIL_REGEX = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+# 4. Endpoints API
 
-def valid_password(password):
-    return (
-        len(password) >= 8 and
-        re.search(r"[A-Z]", password) and
-        re.search(r"[a-z]", password) and
-        re.search(r"\d", password) and
-        re.search(r"[!@#$%^&*(),.?\":{}|<>]", password)
-    )
-
-
-@app.post("/api/signup")
+# Endpoint di registrazione
+@app.route("/api/signup", methods=["POST"])
 def signup():
+    if users is None:
+        return jsonify({"message": "Database not available."}), 503
+        
     data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
 
-    if not data or "email" not in data or "password" not in data:
-        return jsonify({"status": "error", "message": "Email and password required"}), 422
+    if not email or not password:
+        return jsonify({"message": "Missing email or password."}), 400
 
-    email = data["email"].strip().lower()
-    password = data["password"]
+    try:
+        if users.find_one({"email": email}):
+            return jsonify({"message": "User already exists."}), 409
 
-    if not re.match(EMAIL_REGEX, email):
-        return jsonify({"status": "error", "message": "Invalid email format"}), 400
+        hashed_password = generate_password_hash(password)
+        result = users.insert_one({"email": email, "password": hashed_password})
+        
+        user = User({"_id": result.inserted_id, "email": email})
+        
+        # Effettua il login e imposta la sessione
+        login_user(user, remember=True)
 
-    if not valid_password(password):
-        return jsonify({"status": "error", "message": "Password does not meet security requirements"}), 400
+        return jsonify({"message": "User created and logged in successfully.", "email": email}), 201
 
-    if users.find_one({"email": email}):
-        return jsonify({"status": "error", "message": "Email already registered"}), 400
+    except PyMongoError as e:
+        print(f"MongoDB Error during signup: {e}")
+        return jsonify({"message": "Database error during registration."}), 500
 
-    hashed_pw = generate_password_hash(password)
-    result = users.insert_one({"email": email, "password": hashed_pw})
-    # If the application uses session management, a successful signup usually logs the user in immediately
-    user = User(users.find_one({"_id": result.inserted_id}))
-    login_user(user)
 
-    return jsonify({"status": "success", "message": "Account created", "userId": str(result.inserted_id)}), 201
-
-@app.post("/api/login")
+# Endpoint di login
+@app.route("/api/login", methods=["POST"])
 def login():
+    if users is None:
+        return jsonify({"message": "Database not available."}), 503
+        
     data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
 
-    if not data or "email" not in data or "password" not in data:
-        return jsonify({"status": "error", "message": "Email and password required"}), 422
+    try:
+        user_data = users.find_one({"email": email})
 
-    email = data["email"].strip().lower()
-    password = data["password"]
+        if user_data and check_password_hash(user_data["password"], password):
+            user = User(user_data)
+            # Effettua il login e imposta la sessione
+            login_user(user, remember=True) 
+            return jsonify({"message": "Login successful.", "email": email}), 200
+        
+        return jsonify({"message": "Invalid email or password."}), 401
 
-    user_doc = users.find_one({"email": email})
-    if not user_doc or not check_password_hash(user_doc["password"], password):
-        return jsonify({"status": "error", "message": "Invalid email or password"}), 401
-
-    user = User(user_doc)
-    login_user(user)
-
-    return jsonify({"status": "success", "message": "Login successful"}), 200
+    except PyMongoError as e:
+        print(f"MongoDB Error during login: {e}")
+        return jsonify({"message": "Database error during login."}), 500
 
 
-@app.post("/api/logout")
+# Endpoint di logout
+@app.route("/api/logout", methods=["POST"])
 @login_required
 def logout():
     logout_user()
-    return jsonify({"status": "success", "message": "Logged out"}), 200
+    # Il browser eliminerà il cookie in base alla nuova policy
+    return jsonify({"message": "Logout successful."}), 200
 
-@app.get("/api/dashboard")
+# Endpoint protetto (Richiede il login)
+@app.route("/api/dashboard", methods=["GET"])
 @login_required
-def dashboard_data():
-    return jsonify({"status": "success", "message": f"Welcome {current_user.email}!"}), 200
+def dashboard():
+    return jsonify({"message": f"Welcome back, {current_user.email}!"}), 200
 
-# --- SERVER STARTUP ---
+# Nuovo Endpoint: Analisi della Forza della Password
+@app.route("/api/analyze", methods=["POST"])
+@login_required
+def analyze_password():
+    # ... (Il codice dell'endpoint di analisi rimane invariato)
+    data = request.get_json()
+    password = data.get("password")
 
+    if not password:
+        return jsonify({"message": "Password is required for analysis."}), 400
+
+    results = zxcvbn(password)
+
+    security_score = results['score']
+
+    if security_score <= 1:
+        message = "Very weak. Easily guessable."
+    elif security_score == 2:
+        message = "Weak. Could be cracked quickly."
+    elif security_score == 3:
+        message = "Fair. Reasonably secure but could be improved."
+    elif security_score == 4:
+        message = "Strong! Excellent resistance to cracking."
+    else:
+        message = "Password strength is undetermined."
+
+    return jsonify({
+        "score": security_score,
+        "feedback": results.get('feedback', {}).get('suggestions', []),
+        "warning": results.get('feedback', {}).get('warning'),
+        "message": message
+    }), 200
+
+# Entry point
 if __name__ == "__main__":
-    # Get the PORT environment variable, defaulting to 5001 to match docker-compose configuration
-    port = int(os.environ.get("PORT", 5001)) 
-    # Bind to '0.0.0.0' for accessibility within the Docker network
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
