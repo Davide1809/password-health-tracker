@@ -5,3 +5,6 @@ gunicorn==22.0.0
 pymongo==4.7.3
 werkzeug==3.0.3
 zxcvbn==4.4.28
+cryptography
+python-dotenv
+dnspython
