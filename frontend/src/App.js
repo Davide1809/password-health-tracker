@@ -13,7 +13,7 @@ const passwordRequirements = [
   { key: 'symbol', text: 'At least one symbol (!@#$%)', regex: /[!@#$%^&*]/ },
 ];
 
-// Email validation function (UPDATED REGEX for standard email formats)
+// Email validation function
 const isEmailValid = (email) => {
   // Relaxed regex to allow for standard TLDs like .com, .it, .co
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/; 
@@ -120,8 +120,10 @@ const Header = ({ userEmail, onLogout, isAuthenticated }) => (
 
 // --- Form Components ---
 
-// Main Signup Form Component (Story 1)
+// Main Signup Form Component
 const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
+  // CRITICAL: Added name state
+  const [name, setName] = useState(''); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -139,20 +141,23 @@ const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
 
   const isValidEmail = isEmailValid(email);
   const isPasswordStrong = Object.values(reqsMet).every(Boolean);
-  const isSubmitEnabled = isValidEmail && isPasswordStrong && !isLoading;
+  // CRITICAL: Name is required for submission
+  const isNameValid = name.trim().length > 0; 
+  const isSubmitEnabled = isValidEmail && isPasswordStrong && !isLoading && isNameValid;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
 
     if (!isSubmitEnabled) {
-      setError("Please meet all validation requirements.");
+      setError("Please fill in your name and meet all validation requirements.");
       return;
     }
 
     setIsLoading(true);
 
     try {
+      // NOTE: The backend only needs email and password for auth
       const response = await protectedFetch(`${API_BASE_URL}/api/signup`, {
         method: 'POST',
         body: JSON.stringify({ email, password }),
@@ -165,7 +170,9 @@ const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
 
       if (response.ok) {
         localStorage.setItem('jwtToken', data.token); // Store token on success
-        onAuthSuccess(data.email, 'signup');
+        localStorage.setItem('userEmail', email);
+        localStorage.setItem('userName', name); // CRITICAL: Save the name
+        onAuthSuccess(data.email, name, 'signup'); // Pass the name up
       } else {
         setError(data.message || 'Error during registration.');
       }
@@ -191,6 +198,23 @@ const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {/* CRITICAL: NAME INPUT FIELD */}
+        <div>
+          <label htmlFor="name" className="block text-sm font-medium text-gray-300">Your Name</label>
+          <input
+            id="name"
+            name="name"
+            type="text"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={`mt-1 block w-full px-4 py-3 border rounded-lg shadow-inner text-gray-900 bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm 
+              ${name === '' ? 'border-gray-500' : isNameValid ? 'border-green-500' : 'border-red-500'}`}
+            placeholder="E.g., John Doe"
+            disabled={isLoading}
+          />
+        </div>
+        
         <div>
           <label htmlFor="email" className="block text-sm font-medium text-gray-300">Email</label>
           <input
@@ -283,7 +307,11 @@ const LoginForm = ({ onAuthSuccess, onSwitchMode }) => {
 
       if (response.ok) {
         localStorage.setItem('jwtToken', data.token); // Store token on success
-        onAuthSuccess(data.email, 'login');
+        localStorage.setItem('userEmail', email);
+        
+        // Fetch existing name from local storage on login for personalization
+        const existingName = localStorage.getItem('userName') || email.split('@')[0];
+        onAuthSuccess(data.email, existingName, 'login'); 
       } else {
         setError(data.message || 'Invalid credentials.');
       }
@@ -405,15 +433,16 @@ const PasswordAnalyzer = ({ onBackToDashboard }) => {
     }, []);
     
     useEffect(() => {
-        // Ensure API_BASE_URL is not empty before attempting analysis
-        if (API_BASE_URL.startsWith('http')) {
-            analyzePassword(password);
-        } else if (password.length > 0) {
-            setError('API Base URL is not configured. Cannot connect to backend.');
-            setIsLoading(false);
-        } else {
-            setError(null);
-        }
+        // Debounce password analysis to prevent excessive API calls
+        const handler = setTimeout(() => {
+            if (password.length > 0) {
+                analyzePassword(password);
+            } else {
+                setAnalysisResult(null);
+            }
+        }, 500); // 500ms delay
+
+        return () => clearTimeout(handler);
     }, [password, analyzePassword]);
 
 
@@ -760,7 +789,7 @@ const PasswordList = ({ onRefresh, passwords, isLoading, error }) => {
 
 
 // Dashboard Component
-const Dashboard = ({ userEmail, onAnalyzeClick }) => {
+const Dashboard = ({ userEmail, userName, onAnalyzeClick }) => {
   const [dashboardMessage, setDashboardMessage] = useState(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(true);
   
@@ -791,184 +820,160 @@ const Dashboard = ({ userEmail, onAnalyzeClick }) => {
   // Function to fetch the list of passwords
   const fetchPasswords = useCallback(async () => {
       if (!API_BASE_URL.startsWith('http')) {
-        setPasswordError('API Base URL is not configured. Cannot connect to backend.');
-        setPasswords([]);
+        setPasswordError('API URL is not set. Cannot connect to backend.');
         return;
       }
-      
       setIsLoadingPasswords(true);
       setPasswordError(null);
+      
       try {
-          // Use protectedFetch to send JWT token
           const response = await protectedFetch(`${API_BASE_URL}/api/passwords`, { method: 'GET' });
           const data = await response.json();
 
           if (response.ok) {
-              setPasswords(data);
+              setPasswords(data.passwords || []);
           } else {
-              setPasswordError(data.message || 'Password retrieval failed (Unauthorized).');
+              setPasswordError(data.message || 'Failed to load passwords.');
           }
       } catch (error) {
           setPasswordError('Connection error while fetching passwords.');
       } finally {
           setIsLoadingPasswords(false);
       }
-  }, []);
+  }, []); // Empty dependency array means this function is created once
 
-  // Run initial data fetch
   useEffect(() => {
     fetchDashboardStatus();
     fetchPasswords();
   }, [fetchPasswords]);
-  
-  const handlePasswordAdded = () => {
-      // Refresh the list immediately after a successful add
-      fetchPasswords();
-  }
+
 
   return (
-    <div className="bg-gray-900 p-8 md:p-12 rounded-2xl shadow-2xl w-full max-w-4xl mt-16 border border-indigo-700/50">
-      <h1 className="text-4xl font-extrabold text-white mb-2">
-        Main Dashboard
-      </h1>
-      <p className="text-xl text-indigo-400 mb-6 border-b border-gray-700 pb-4">
-        <span className="font-semibold">Welcome, {userEmail}!</span>
-      </p>
-
-      {/* Auth Status Section */}
-      <div className="bg-gray-800 p-4 rounded-lg mb-8 border border-gray-700 shadow-inner">
-        <h3 className="text-lg font-semibold text-gray-300 mb-2">Authentication Status (Backend)</h3>
-        {isLoadingStatus ? (
-          <p className="text-gray-400">Loading protected message...</p>
-        ) : (
-          <p className={`${dashboardMessage && dashboardMessage.includes('Unauthorized') || dashboardMessage.includes('Error') ? 'text-red-400' : 'text-green-300'}`}>
-            {dashboardMessage}
+    <div className="pt-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto pb-10">
+      
+      {/* Dashboard Welcome Area */}
+      <div className="bg-gray-800 p-8 rounded-2xl shadow-xl mb-10 border-l-8 border-indigo-500">
+        <h1 className="text-4xl font-extrabold text-white mb-2">
+          {/* CRITICAL: Use userName for personalized welcome */}
+          Welcome, <span className="text-indigo-400">{userName}</span>!
+        </h1>
+        <p className="text-gray-400 mb-4">
+          Logged in as: <span className="font-mono text-sm text-yellow-400">{userEmail}</span>
+        </p>
+        
+        {/* API Status Check */}
+        <div className="flex items-center space-x-4 text-sm">
+          <p className="text-gray-400">Backend Status:</p>
+          <p className={`font-semibold ${isLoadingStatus ? 'text-yellow-500' : (dashboardMessage && dashboardMessage.includes('Welcome') ? 'text-green-500' : 'text-red-500')}`}>
+            {isLoadingStatus ? 'Connecting...' : dashboardMessage || 'Error'}
           </p>
-        )}
+        </div>
       </div>
 
-      {/* Add Password Form */}
-      <AddPasswordForm onPasswordAdded={handlePasswordAdded} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Column (Add Password) */}
+        <div className="lg:col-span-1">
+          <AddPasswordForm onPasswordAdded={fetchPasswords} />
+          
+          <button
+              onClick={onAnalyzeClick}
+              className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-xl shadow-lg text-base font-semibold text-white bg-yellow-600 hover:bg-yellow-700 transition duration-150 transform hover:scale-[1.01] focus:ring-4 focus:ring-yellow-500/50"
+          >
+              <Zap className="mr-3 h-6 w-6" />
+              Analyze Password Strength
+          </button>
+        </div>
 
-      {/* Password List */}
-      <PasswordList 
-        passwords={passwords} 
-        onRefresh={fetchPasswords} 
-        isLoading={isLoadingPasswords} 
-        error={passwordError}
-      />
-      
-      {/* Global Actions Section */}
-      <div className="flex justify-center mt-10 pt-4 border-t border-gray-700">
-        <button
-          onClick={onAnalyzeClick}
-          className="flex items-center justify-center py-3 px-8 rounded-xl text-base font-semibold text-white bg-blue-600 hover:bg-blue-700 transition duration-150 shadow-lg transform hover:scale-[1.01]"
-        >
-          <Zap className="mr-2 h-5 w-5" />
-          Analyze New Password
-        </button>
+        {/* Right Column (Password List) */}
+        <div className="lg:col-span-2">
+            <PasswordList 
+                onRefresh={fetchPasswords} 
+                passwords={passwords} 
+                isLoading={isLoadingPasswords} 
+                error={passwordError}
+            />
+        </div>
       </div>
     </div>
   );
 };
 
 
-// Application Root Component
-export default function App() {
-  // Mode: 'login', 'signup', 'dashboard', 'analyze'
-  const [mode, setMode] = useState('login'); 
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userEmail, setUserEmail] = useState(''); 
-  const [lastAction, setLastAction] = useState(null); 
+// Main Application Component
+const App = () => {
+  const [mode, setMode] = useState(
+    localStorage.getItem('jwtToken') ? 'dashboard' : 'login'
+  );
+  const [userEmail, setUserEmail] = useState(localStorage.getItem('userEmail') || '');
+  // CRITICAL: Initialize userName from localStorage
+  const [userName, setUserName] = useState(localStorage.getItem('userName') || '');
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('jwtToken'));
 
-  // Effect to check local storage for existing token on load
+  // Handle successful Login or Signup
+  const handleAuthSuccess = useCallback((email, name, action) => {
+    // Token, email, and name are already saved in localStorage by the forms
+    setUserEmail(email);
+    setUserName(name); // Set the name passed from the form
+    setIsAuthenticated(true);
+    setMode('dashboard'); 
+  }, []);
+
+  // Handle Logout
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('jwtToken');
+    localStorage.removeItem('userEmail');
+    localStorage.removeItem('userName'); // Clear the name on logout
+    setUserEmail('');
+    setUserName('');
+    setIsAuthenticated(false);
+    setMode('login');
+  }, []);
+
+  // Effect for initial token check
   useEffect(() => {
-    const storedToken = localStorage.getItem('jwtToken');
-    const storedEmail = localStorage.getItem('userEmail');
-    
-    if (storedToken && storedEmail) {
-      // If a token exists, assume the user is still authenticated 
-      // (a quick check is made when loading the dashboard)
-      setUserEmail(storedEmail);
-      setIsAuthenticated(true);
-      setMode('dashboard');
-    } else {
-      setMode('login');
+    if (localStorage.getItem('jwtToken')) {
+        setIsAuthenticated(true);
+        setMode('dashboard');
     }
   }, []);
 
-  const handleAuthSuccess = (email, action) => {
-    localStorage.setItem('userEmail', email); // Store email alongside token
-    setUserEmail(email);
-    setIsAuthenticated(true);
-    setLastAction(action);
-    setMode('dashboard'); 
-  };
 
-  const handleLogout = async () => {
-    try {
-      // Clear token from local storage immediately
-      localStorage.removeItem('jwtToken');
-      localStorage.removeItem('userEmail');
-      
-      // Attempt to log out on the backend (using the now-cleared token, which is okay)
-      await protectedFetch(`${API_BASE_URL}/api/logout`, { method: 'POST' });
-    } catch (error) {
-      console.error('Error during backend logout:', error);
-    }
-    // Force frontend logout regardless of backend success/failure
-    setUserEmail('');
-    setIsAuthenticated(false);
-    setMode('login'); 
-    setLastAction(null);
-  };
-  
-  const handleAnalyzeClick = () => {
-    setMode('analyze');
-  };
-
-  const handleBackToDashboard = () => {
-      setMode('dashboard');
-  };
-
-  const renderContent = () => {
-    if (!isAuthenticated) {
-      if (mode === 'signup') {
-        return <SignupForm onAuthSuccess={handleAuthSuccess} onSwitchMode={setMode} />;
-      }
-      return <LoginForm onAuthSuccess={handleAuthSuccess} onSwitchMode={setMode} />;
-    }
-    
-    // Authenticated content
-    switch (mode) {
-        case 'analyze':
-            return (
-                <PasswordAnalyzer 
-                    onBackToDashboard={handleBackToDashboard}
-                />
-            );
-        case 'dashboard':
-        default:
-            return (
-                <Dashboard 
-                    userEmail={userEmail} 
-                    lastAction={lastAction}
-                    onAnalyzeClick={handleAnalyzeClick}
-                />
-            );
-    }
-  };
-
+  // Rendering based on mode
   return (
-    <div className="min-h-screen bg-gray-950 flex flex-col items-center pt-20 pb-10 font-sans">
+    <div className="min-h-screen bg-gray-950 flex flex-col font-sans">
       <Header 
         userEmail={userEmail} 
         onLogout={handleLogout} 
         isAuthenticated={isAuthenticated} 
       />
-      <div className="flex-grow flex items-center justify-center w-full max-w-7xl px-4 sm:px-6 lg:px-8">
-        {renderContent()}
-      </div>
+      
+      {/* Main content area */}
+      <main className={`flex-grow flex items-center justify-center ${mode !== 'dashboard' ? 'pt-24 pb-10' : 'pt-20'}`}>
+        
+        {mode === 'login' && <LoginForm onAuthSuccess={handleAuthSuccess} onSwitchMode={setMode} />}
+        {mode === 'signup' && <SignupForm onAuthSuccess={handleAuthSuccess} onSwitchMode={setMode} />}
+        
+        {mode === 'dashboard' && isAuthenticated && (
+          <Dashboard 
+            userEmail={userEmail} 
+            userName={userName} // Pass userName to Dashboard
+            onAnalyzeClick={() => setMode('analyze')}
+          />
+        )}
+        
+        {mode === 'analyze' && isAuthenticated && (
+            <PasswordAnalyzer onBackToDashboard={() => setMode('dashboard')} />
+        )}
+
+        {/* Fallback/Loading Screen */}
+        {mode === 'dashboard' && !isAuthenticated && (
+          <div className="text-white text-xl p-8 max-w-lg w-full bg-gray-800 rounded-xl shadow-2xl text-center">
+              Checking authentication status...
+          </div>
+        )}
+      </main>
     </div>
   );
-}
+};
+
+export default App;
