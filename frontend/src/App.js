@@ -15,28 +15,29 @@ const passwordRequirements = [
 
 // Email validation function
 const isEmailValid = (email) => {
-  // Relaxed regex to allow for standard TLDs like .com, .it, .co
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/; 
   return emailRegex.test(email);
 };
 
-// --- API Fetch Wrapper (CRITICAL: Adds Authorization Header) ---
-const protectedFetch = async (url, options = {}) => {
-    const token = localStorage.getItem('jwtToken');
+// --- API Fetch Wrapper (CRITICAL: NOW USES COOKIES) ---
+const authFetch = async (url, options = {}) => {
     const headers = {
         'Content-Type': 'application/json',
         ...options.headers,
     };
 
-    // CRITICAL FIX: Only add Authorization header if token exists
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
+    // CRITICAL FIX: This tells the browser to send the session cookie
+    // from the backend with every request.
+    const fetchOptions = {
+        ...options,
+        headers,
+        credentials: 'include' 
+    };
 
     // Exponential Backoff implementation (Max 3 retries)
     for (let i = 0; i < 3; i++) {
         try {
-            const response = await fetch(url, { ...options, headers });
+            const response = await fetch(url, fetchOptions);
             return response;
         } catch (error) {
             if (i < 2) {
@@ -47,7 +48,6 @@ const protectedFetch = async (url, options = {}) => {
             }
         }
     }
-    // Should be unreachable, but here for robustness
     throw new Error("Failed to fetch after multiple retries.");
 };
 
@@ -122,7 +122,6 @@ const Header = ({ userEmail, onLogout, isAuthenticated }) => (
 
 // Main Signup Form Component
 const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
-  // CRITICAL: Added name state
   const [name, setName] = useState(''); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -141,7 +140,6 @@ const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
 
   const isValidEmail = isEmailValid(email);
   const isPasswordStrong = Object.values(reqsMet).every(Boolean);
-  // CRITICAL: Name is required for submission
   const isNameValid = name.trim().length > 0; 
   const isSubmitEnabled = isValidEmail && isPasswordStrong && !isLoading && isNameValid;
 
@@ -157,22 +155,19 @@ const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
     setIsLoading(true);
 
     try {
-      // NOTE: The backend only needs email and password for auth
-      const response = await protectedFetch(`${API_BASE_URL}/api/signup`, {
+      // CRITICAL: Using authFetch and correct /api/signup path
+      const response = await authFetch(`${API_BASE_URL}/api/signup`, {
         method: 'POST',
         body: JSON.stringify({ email, password }),
-        headers: {
-            // Token not needed for signup
-        }
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        localStorage.setItem('jwtToken', data.token); // Store token on success
+        // NO token logic. The cookie is set by the browser.
         localStorage.setItem('userEmail', email);
-        localStorage.setItem('userName', name); // CRITICAL: Save the name
-        onAuthSuccess(data.email, name, 'signup'); // Pass the name up
+        localStorage.setItem('userName', name); 
+        onAuthSuccess(data.email, name, 'signup');
       } else {
         setError(data.message || 'Error during registration.');
       }
@@ -198,7 +193,7 @@ const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* CRITICAL: NAME INPUT FIELD */}
+        {/* NAME INPUT FIELD */}
         <div>
           <label htmlFor="name" className="block text-sm font-medium text-gray-300">Your Name</label>
           <input
@@ -295,22 +290,22 @@ const LoginForm = ({ onAuthSuccess, onSwitchMode }) => {
     setIsLoading(true);
 
     try {
-      const response = await protectedFetch(`${API_BASE_URL}/api/login`, {
+      // CRITICAL: Using authFetch and correct /api/login path
+      const response = await authFetch(`${API_BASE_URL}/api/login`, {
         method: 'POST',
         body: JSON.stringify({ email, password }),
-        headers: {
-            // Token not needed for login
-        }
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        localStorage.setItem('jwtToken', data.token); // Store token on success
+        // NO token logic. The cookie is set by the browser.
         localStorage.setItem('userEmail', email);
         
-        // Fetch existing name from local storage on login for personalization
+        // Try to get name from localStorage, fallback to email prefix
         const existingName = localStorage.getItem('userName') || email.split('@')[0];
+        localStorage.setItem('userName', existingName); // Ensure it's set
+        
         onAuthSuccess(data.email, existingName, 'login'); 
       } else {
         setError(data.message || 'Invalid credentials.');
@@ -400,7 +395,6 @@ const PasswordAnalyzer = ({ onBackToDashboard }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
 
-    // This runs the analysis whenever the password changes
     const analyzePassword = useCallback(async (pwd) => {
         if (pwd.length === 0) {
              setAnalysisResult(null);
@@ -413,7 +407,8 @@ const PasswordAnalyzer = ({ onBackToDashboard }) => {
         setAnalysisResult(null);
 
         try {
-            const response = await protectedFetch(`${API_BASE_URL}/api/analyze`, {
+            // CRITICAL: Using authFetch and correct /api/analyze path
+            const response = await authFetch(`${API_BASE_URL}/api/analyze`, {
                 method: 'POST',
                 body: JSON.stringify({ password: pwd }),
             });
@@ -433,7 +428,6 @@ const PasswordAnalyzer = ({ onBackToDashboard }) => {
     }, []);
     
     useEffect(() => {
-        // Debounce password analysis to prevent excessive API calls
         const handler = setTimeout(() => {
             if (password.length > 0) {
                 analyzePassword(password);
@@ -448,7 +442,6 @@ const PasswordAnalyzer = ({ onBackToDashboard }) => {
 
     const scoreColors = ['text-red-500', 'text-orange-500', 'text-yellow-500', 'text-lime-500', 'text-green-500'];
     const scoreDescriptions = ['Too Weak', 'Weak', 'Acceptable', 'Good', 'Excellent'];
-    // Simplified time descriptions for display
     const timeDescriptions = ['< 1 Second', 'Seconds', 'Hours', 'Days', 'Months', 'Years', 'Centuries', 'Millennia'];
 
     const getScoreDisplay = (score) => ({
@@ -456,10 +449,8 @@ const PasswordAnalyzer = ({ onBackToDashboard }) => {
         color: scoreColors[score] || 'text-gray-400'
     });
     
-    // Convert crack time estimate to a more user-friendly string
     const getCrackTimeDisplay = (timeText) => {
         if (!timeText) return 'N/A';
-        // Mock mapping based on zxcvbn common outputs
         if (timeText.includes('instant')) return timeDescriptions[0];
         if (timeText.includes('second')) return timeDescriptions[1];
         if (timeText.includes('hour')) return timeDescriptions[2];
@@ -557,7 +548,7 @@ const PasswordAnalyzer = ({ onBackToDashboard }) => {
     );
 };
 
-// Component for adding a new password entry (Part of Story 3)
+// Component for adding a new password entry
 const AddPasswordForm = ({ onPasswordAdded }) => {
     const [siteName, setSiteName] = useState('');
     const [username, setUsername] = useState('');
@@ -581,7 +572,8 @@ const AddPasswordForm = ({ onPasswordAdded }) => {
         setIsLoading(true);
 
         try {
-            const response = await protectedFetch(`${API_BASE_URL}/api/passwords`, {
+            // CRITICAL: Using authFetch and correct /api/passwords path
+            const response = await authFetch(`${API_BASE_URL}/api/passwords`, {
                 method: 'POST',
                 body: JSON.stringify({ site_name: siteName, username, password }),
             });
@@ -590,7 +582,6 @@ const AddPasswordForm = ({ onPasswordAdded }) => {
 
             if (response.ok) {
                 setSuccess(true);
-                // Reset form and call parent callback to refresh list
                 setSiteName('');
                 setUsername('');
                 setPassword('');
@@ -602,7 +593,6 @@ const AddPasswordForm = ({ onPasswordAdded }) => {
             setError('Connection error. Please try again later.');
         } finally {
             setIsLoading(false);
-            // Hide success message after a few seconds
             setTimeout(() => setSuccess(false), 3000);
         }
     };
@@ -692,7 +682,6 @@ const PasswordItem = ({ entry }) => {
         }
     };
 
-    // Helper to format creation date
     const formatDate = (isoString) => {
         const date = new Date(isoString);
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -725,7 +714,6 @@ const PasswordItem = ({ entry }) => {
                     {showPassword ? entry.password : '••••••••••••••••'}
                 </div>
                 <div className="flex space-x-2">
-                    {/* Copy Button */}
                     <button
                         onClick={() => handleCopy(entry.password)}
                         className={`p-1 rounded-full transition ${copyStatus === 'Copied!' ? 'bg-green-600 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
@@ -734,7 +722,6 @@ const PasswordItem = ({ entry }) => {
                     >
                         {copyStatus === 'Copied!' ? <CheckCircle size={18} /> : <Clipboard size={18} />}
                     </button>
-                    {/* Show/Hide Button */}
                     <button
                         onClick={() => setShowPassword(!showPassword)}
                         className="p-1 bg-gray-600 text-white rounded-full hover:bg-gray-500 transition"
@@ -748,7 +735,7 @@ const PasswordItem = ({ entry }) => {
     );
 };
 
-// Component for listing all stored passwords (Part of Story 3)
+// Component for listing all stored passwords
 const PasswordList = ({ onRefresh, passwords, isLoading, error }) => {
     return (
         <div className="mt-10">
@@ -790,60 +777,37 @@ const PasswordList = ({ onRefresh, passwords, isLoading, error }) => {
 
 // Dashboard Component
 const Dashboard = ({ userEmail, userName, onAnalyzeClick }) => {
-  const [dashboardMessage, setDashboardMessage] = useState(null);
-  const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+  // REMOVED: State for dashboard message
   
-  // State for Story 3: Password Management
   const [passwords, setPasswords] = useState([]);
   const [isLoadingPasswords, setIsLoadingPasswords] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
 
-  // Function to fetch the protected message
-  const fetchDashboardStatus = async () => {
-    try {
-      // Use protectedFetch to send JWT token
-      const response = await protectedFetch(`${API_BASE_URL}/api/dashboard`, { method: 'GET' });
-      const data = await response.json();
-
-      if (response.ok) {
-        setDashboardMessage(data.message);
-      } else {
-        setDashboardMessage(data.message || 'Error retrieving data (Unauthorized).');
-      }
-    } catch (error) {
-      setDashboardMessage('Backend Connection Error. Check API_BASE_URL configuration.');
-    } finally {
-      setIsLoadingStatus(false);
-    }
-  };
+  // REMOVED: fetchDashboardStatus function
   
-  // Function to fetch the list of passwords
   const fetchPasswords = useCallback(async () => {
-      if (!API_BASE_URL.startsWith('http')) {
-        setPasswordError('API URL is not set. Cannot connect to backend.');
-        return;
-      }
       setIsLoadingPasswords(true);
       setPasswordError(null);
       
       try {
-          const response = await protectedFetch(`${API_BASE_URL}/api/passwords`, { method: 'GET' });
+          // CRITICAL: Using authFetch and correct /api/passwords path
+          const response = await authFetch(`${API_BASE_URL}/api/passwords`, { method: 'GET' });
           const data = await response.json();
 
           if (response.ok) {
-              setPasswords(data.passwords || []);
+              setPasswords(data || []); // data is the list itself
           } else {
-              setPasswordError(data.message || 'Failed to load passwords.');
+              setPasswordError(data.message || 'Password retrieval failed.');
           }
       } catch (error) {
           setPasswordError('Connection error while fetching passwords.');
       } finally {
           setIsLoadingPasswords(false);
       }
-  }, []); // Empty dependency array means this function is created once
+  }, []);
 
   useEffect(() => {
-    fetchDashboardStatus();
+    // REMOVED: Call to fetchDashboardStatus()
     fetchPasswords();
   }, [fetchPasswords]);
 
@@ -851,27 +815,19 @@ const Dashboard = ({ userEmail, userName, onAnalyzeClick }) => {
   return (
     <div className="pt-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto pb-10">
       
-      {/* Dashboard Welcome Area */}
       <div className="bg-gray-800 p-8 rounded-2xl shadow-xl mb-10 border-l-8 border-indigo-500">
         <h1 className="text-4xl font-extrabold text-white mb-2">
-          {/* CRITICAL: Use userName for personalized welcome */}
-          Welcome, <span className="text-indigo-400">{userName}</span>!
+          Welcome, <span className="text-indigo-400">{userName || 'User'}</span>!
         </h1>
-        <p className="text-gray-400 mb-4">
+        <p className="text-gray-400">
           Logged in as: <span className="font-mono text-sm text-yellow-400">{userEmail}</span>
         </p>
         
-        {/* API Status Check */}
-        <div className="flex items-center space-x-4 text-sm">
-          <p className="text-gray-400">Backend Status:</p>
-          <p className={`font-semibold ${isLoadingStatus ? 'text-yellow-500' : (dashboardMessage && dashboardMessage.includes('Welcome') ? 'text-green-500' : 'text-red-500')}`}>
-            {isLoadingStatus ? 'Connecting...' : dashboardMessage || 'Error'}
-          </p>
-        </div>
+        {/* REMOVED: Backend Status section */}
+
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column (Add Password) */}
         <div className="lg:col-span-1">
           <AddPasswordForm onPasswordAdded={fetchPasswords} />
           
@@ -884,7 +840,6 @@ const Dashboard = ({ userEmail, userName, onAnalyzeClick }) => {
           </button>
         </div>
 
-        {/* Right Column (Password List) */}
         <div className="lg:col-span-2">
             <PasswordList 
                 onRefresh={fetchPasswords} 
@@ -901,39 +856,36 @@ const Dashboard = ({ userEmail, userName, onAnalyzeClick }) => {
 
 // Main Application Component
 const App = () => {
-  const [mode, setMode] = useState(
-    localStorage.getItem('jwtToken') ? 'dashboard' : 'login'
-  );
+  // Check localStorage for auth status on initial load
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('userEmail'));
+  const [mode, setMode] = useState(isAuthenticated ? 'dashboard' : 'login');
   const [userEmail, setUserEmail] = useState(localStorage.getItem('userEmail') || '');
-  // CRITICAL: Initialize userName from localStorage
   const [userName, setUserName] = useState(localStorage.getItem('userName') || '');
-  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('jwtToken'));
 
   // Handle successful Login or Signup
   const handleAuthSuccess = useCallback((email, name, action) => {
-    // Token, email, and name are already saved in localStorage by the forms
+    // Data is already saved in localStorage by the forms
     setUserEmail(email);
-    setUserName(name); // Set the name passed from the form
+    setUserName(name); 
     setIsAuthenticated(true);
     setMode('dashboard'); 
   }, []);
 
   // Handle Logout
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem('jwtToken');
+  const handleLogout = useCallback(async () => {
+    // Clear frontend state
     localStorage.removeItem('userEmail');
-    localStorage.removeItem('userName'); // Clear the name on logout
+    localStorage.removeItem('userName'); 
     setUserEmail('');
     setUserName('');
     setIsAuthenticated(false);
     setMode('login');
-  }, []);
 
-  // Effect for initial token check
-  useEffect(() => {
-    if (localStorage.getItem('jwtToken')) {
-        setIsAuthenticated(true);
-        setMode('dashboard');
+    // Tell backend to clear its session cookie
+    try {
+      await authFetch(`${API_BASE_URL}/api/logout`, { method: 'POST' });
+    } catch (error) {
+      console.error('Error during backend logout:', error);
     }
   }, []);
 
@@ -947,7 +899,6 @@ const App = () => {
         isAuthenticated={isAuthenticated} 
       />
       
-      {/* Main content area */}
       <main className={`flex-grow flex items-center justify-center ${mode !== 'dashboard' ? 'pt-24 pb-10' : 'pt-20'}`}>
         
         {mode === 'login' && <LoginForm onAuthSuccess={handleAuthSuccess} onSwitchMode={setMode} />}
@@ -968,7 +919,7 @@ const App = () => {
         {/* Fallback/Loading Screen */}
         {mode === 'dashboard' && !isAuthenticated && (
           <div className="text-white text-xl p-8 max-w-lg w-full bg-gray-800 rounded-xl shadow-2xl text-center">
-              Checking authentication status...
+              Redirecting to login...
           </div>
         )}
       </main>
