@@ -1,6 +1,6 @@
 This is the CI/CD pipeline configuration file for Google Cloud Build.
 
-It defines four steps: Test, Build, Push, and Deploy.
+It defines four steps:Test, Build, Push, and Deploy.
 
 Global environment variables (must match the substitutions set in the trigger UI)
 
