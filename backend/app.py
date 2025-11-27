@@ -2,6 +2,8 @@ import os
 import secrets
 import json
 from datetime import datetime, timedelta
+import re # Added for email format validation
+from zxcvbn import zxcvbn # Added for password strength checking
 
 from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
@@ -45,7 +47,6 @@ except Exception as e:
 # --- Encryption Setup ---
 # Derive a Fernet key from the SECRET_KEY for AES-256 encryption.
 # Fernet keys must be 32 URL-safe base64-encoded bytes.
-# We hash the secret key to ensure a good quality, 32-byte key source.
 def get_fernet_key(secret_key):
     # Use the first 32 bytes of the secret key hash and base64 encode it
     key_bytes = secret_key.encode('utf-8')
@@ -58,6 +59,26 @@ try:
 except Exception as e:
     print(f"Error initializing Fernet encryption: {e}")
     fernet = None
+
+# --- UTILITY FUNCTIONS (Added to fix ImportError in tests) ---
+
+def hash_password(password):
+    """Hashes a password using werkzeug.security."""
+    return generate_password_hash(password)
+
+def check_password(hashed_password, password):
+    """Checks a password against a hash using werkzeug.security."""
+    return check_password_hash(hashed_password, password)
+
+def check_email_format(email):
+    """Checks if the email format is valid using regex."""
+    return re.match(r'[^@]+@[^@]+\.[^@]+', email) is not None
+
+def check_password_strength(password):
+    """Uses zxcvbn to check password strength and returns a score (0-4)."""
+    # zxcvbn returns score from 0 (terrible) to 4 (strong)
+    results = zxcvbn(password)
+    return results['score']
 
 # --- Helpers for Encryption/Decryption ---
 def encrypt_data(data):
@@ -97,12 +118,20 @@ def signup():
     if not email or not password:
         return jsonify({'message': 'Missing email or password'}), 400
 
+    # Validate email format
+    if not check_email_format(email):
+        return jsonify({'message': 'Invalid email format'}), 400
+
     # Check if user already exists
     if users_collection.find_one({'email': email}):
         return jsonify({'message': 'Email already in use'}), 409
 
+    # Check password strength (Enforce minimum score of 3 for signup)
+    if check_password_strength(password) < 3:
+        return jsonify({'message': 'Password is too weak. Score must be 3 or higher.'}), 400
+
     # Hash the password
-    hashed_password = generate_password_hash(password)
+    hashed_password = hash_password(password)
 
     # Insert new user into MongoDB
     users_collection.insert_one({
@@ -112,8 +141,9 @@ def signup():
     })
 
     # Auto-login after signup
-    session['user_id'] = str(users_collection.find_one({'email': email})['_id'])
-    session['email'] = email
+    user = users_collection.find_one({'email': email})
+    session['user_id'] = str(user['_id'])
+    session['email'] = user['email']
     return jsonify({'message': 'User created and logged in successfully', 'email': email}), 201
 
 @app.route('/api/login', methods=['POST'])
@@ -124,7 +154,7 @@ def login():
 
     user = users_collection.find_one({'email': email})
 
-    if user and check_password_hash(user['password'], password):
+    if user and check_password(user['password'], password):
         # Set session variable on successful login
         session['user_id'] = str(user['_id'])
         session['email'] = user['email']
@@ -145,7 +175,7 @@ def dashboard():
     email = session.get('email')
     return jsonify({'message': f'Welcome back, {email}!'}), 200
 
-# --- Password Analysis Endpoint (Existing Story 2) ---
+# --- Password Analysis Endpoint (Now uses real zxcvbn) ---
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_password_endpoint():
@@ -154,34 +184,30 @@ def analyze_password_endpoint():
 
     if not password:
         return jsonify({'message': 'Password is required for analysis'}), 400
-
-    # NOTE: In a real-world scenario, you would run zxcvbn here.
-    # Since zxcvbn requires a complex installation, we use a simple mock 
-    # for the purpose of this demonstration, but the API path is correct.
     
-    # Mock zxcvbn analysis based on password length
-    length = len(password)
-    if length < 5:
-        score = 0
-        crack_time_display = "instant"
-        warning = "Too short. Requires at least 8 characters."
-        suggestions = ["Increase the length.", "Mix characters."]
-    elif length < 8:
-        score = 1
-        crack_time_display = "a few seconds"
-        warning = "Still too short."
-        suggestions = ["Increase the length to at least 8.", "Add symbols."]
-    elif length < 12:
-        score = 2
-        crack_time_display = "a few hours"
-        warning = None
-        suggestions = ["Add more words or symbols to increase length."]
+    # Use actual zxcvbn analysis
+    results = zxcvbn(password)
+    score = results['score']
+    
+    # Format crack time from seconds to a human-readable string
+    crack_time_s = results['crack_times_seconds']['offline_fast_hashing_1e10_per_second']
+    
+    if crack_time_s < 1:
+        crack_time_display = "instantly"
+    elif crack_time_s < 60:
+        crack_time_display = f"in about {int(crack_time_s)} seconds"
+    elif crack_time_s < 3600:
+        crack_time_display = f"in about {int(crack_time_s / 60)} minutes"
+    elif crack_time_s < 86400:
+        crack_time_display = f"in about {int(crack_time_s / 3600)} hours"
+    elif crack_time_s < 31536000:
+        crack_time_display = f"in about {int(crack_time_s / 86400)} days"
     else:
-        # A mock strong password result
-        score = 4
-        crack_time_display = "centuries"
-        warning = None
-        suggestions = ["Great job!"]
+        crack_time_display = f"in about {int(crack_time_s / 31536000)} years"
+
+    # Extract feedback
+    warning = results['feedback']['warning']
+    suggestions = results['feedback']['suggestions']
 
     return jsonify({
         'score': score,
@@ -213,6 +239,9 @@ def save_password():
     encrypted_password = encrypt_data(raw_password)
     if encrypted_password is None:
         return jsonify({'message': 'Encryption failed. Check server setup.'}), 500
+        
+    # Get strength score for health check dashboard
+    strength_score = check_password_strength(raw_password)
 
     # Create the password entry document
     password_entry = {
@@ -220,13 +249,14 @@ def save_password():
         'site_name': site_name,
         'username': username,
         'encrypted_password': encrypted_password,
+        'strength_score': strength_score, # Store strength score
         'created_at': datetime.utcnow()
     }
 
     # Save to the passwords collection
     passwords_collection.insert_one(password_entry)
 
-    return jsonify({'message': 'Password stored securely.'}), 201
+    return jsonify({'message': 'Password stored securely.', 'strength_score': strength_score}), 201
 
 
 @app.route('/api/passwords', methods=['GET'])
@@ -234,9 +264,7 @@ def save_password():
 def get_passwords():
     user_id = session.get('user_id')
     
-    # Retrieve all entries for the current user
-    # NOTE: MongoDB stores the user_id as a string, but in production, 
-    # you might want to use ObjectId if user_id is the primary key _id.
+    # Retrieve all entries for the current user, sorting by newest first
     cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
     
     passwords_list = []
@@ -249,6 +277,7 @@ def get_passwords():
             'site_name': doc['site_name'],
             'username': doc['username'],
             'password': decrypted_password, # The decrypted, raw password
+            'strength_score': doc.get('strength_score', 0), # Include strength score
             'created_at': doc['created_at'].isoformat()
         })
         
