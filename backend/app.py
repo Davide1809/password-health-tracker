@@ -18,6 +18,8 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 MONGO_URI = os.environ.get('MONGO_URI')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
+# CI/CD Test Comment: 2025-11-27
+
 # Configure session cookies for secure cross-site interaction
 app.config.update(
     SESSION_COOKIE_SECURE=True,
