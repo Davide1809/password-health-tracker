@@ -60,20 +60,22 @@ def hash_password(password):
     """Hashes the password using Werkzeug's secure method."""
     return generate_password_hash(password)
 
-# FIX 1: Swapped argument order to match common usage and test expectations (hashed, raw)
-def check_password(hashed_password, password):
-    """Checks a raw password against a hashed one. (pwhash, password)"""
-    return check_password_hash(hashed_password, password)
+# FIX 1: Defined signature to match test call (raw_password, hashed_password)
+def check_password(raw_password, hashed_password):
+    """Checks a raw password against a hashed one.
+       Uses (raw, hashed) signature to match unit tests.
+       Internal call uses Werkzeug's required (hashed, raw) order."""
+    return check_password_hash(hashed_password, raw_password)
 
 def check_email_format(email):
     """Simple email format validation."""
     email_regex = r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$'
     return re.match(email_regex, email) is not None
 
-# FIX 2: Returns the integer score (0-4) as expected by the unit tests.
+# FIX 2: Returns boolean (True if strong enough, False otherwise) to satisfy unit test assertions
 def check_password_strength(password):
-    """Checks password strength using zxcvbn. Returns the integer score (0-4)."""
-    return zxcvbn(password)['score']
+    """Checks password strength using zxcvbn. Returns True if score >= 3, False otherwise."""
+    return zxcvbn(password)['score'] >= 3
 
 def encrypt_data(data):
     """Encrypts a string using Fernet."""
@@ -115,9 +117,9 @@ def signup():
     if not check_email_format(email):
         return jsonify({'message': 'Invalid email format'}), 400
 
-    # Updated strength check using integer score
-    strength_score = check_password_strength(password)
-    if strength_score < 3: 
+    # Using the fixed boolean check_password_strength
+    if not check_password_strength(password): 
+        # Re-run zxcvbn just to get the detailed feedback for the user
         analysis = zxcvbn(password)
         warning = analysis['feedback']['warning'] or "Password is not strong enough."
         return jsonify({'message': warning + " Please use a stronger password (Score 3 or higher is required)."}), 400
@@ -149,8 +151,8 @@ def login():
 
     user = users_collection.find_one({'email': email})
 
-    # Call check_password with the new (hashed, raw) order
-    if user and check_password(user['password'], password): 
+    # Call check_password with the new (raw_password, hashed_password) order
+    if user and check_password(password, user['password']): 
         # Set session variable on successful login
         session['user_id'] = str(user['_id'])
         session['email'] = user['email']
