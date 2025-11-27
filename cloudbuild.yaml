@@ -1,10 +1,16 @@
 substitutions:
-
   # The region for the Cloud Run deployment
   _REGION: us-central1
 
-steps:
+# ==================================================================
+# BUILD OPTIONS (Fixes the logging/service_account conflict)
+# ==================================================================
+options:
+  # This setting tells Cloud Build to use the standard, user-owned regional log bucket.
+  # This satisfies the requirement when a service account is specified, resolving the error.
+  default_logs_bucket_behavior: 'REGIONAL_USER_OWNED_BUCKET'
 
+steps:
   # ==================================================================
   # Step 1: Run Unit Tests (Backend)
   # ==================================================================
@@ -15,10 +21,10 @@ steps:
     args:
       - -c
       - |
-          # Install dependencies, including cryptography and pytest
+          Install dependencies, including cryptography and pytest
           pip install -r requirements.txt
 
-          # Run tests
+          Run tests
           echo "--- Executing Unit Tests ---"
           pytest
           if [ $$? -ne 0 ]; then
