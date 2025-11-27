@@ -1,0 +1,128 @@
+This is the CI/CD pipeline configuration file for Google Cloud Build.
+
+Ensure this file is located in the root of your repository.
+
+Global environment variables
+
+substitutions:
+
+GCP project ID is automatically substituted by Cloud Build.
+
+_REGION: us-central1 # Replace with your region if different.
+
+steps:
+
+==================================================================
+
+Step 1: Run Unit Tests (Backend)
+
+Uses the python image to install dependencies and run pytest.
+
+==================================================================
+
+name: 'python:3.11-slim'
+id: Test-Backend
+workingDirectory: 'backend'
+entrypoint: 'sh'
+args:
+
+'-c'
+
+|
+
+Install dependencies, including pytest
+
+pip install -r requirements.txt
+
+Run tests
+
+echo "--- Executing Unit Tests ---"
+pytest
+if [ $$? -ne 0 ]; then
+echo "Tests failed! Aborting deployment."
+exit 1
+fi
+echo "--- Tests passed successfully! ---"
+
+==================================================================
+
+Step 2: Build Docker Image (Backend)
+
+Builds the image only if tests passed (waitFor condition).
+
+==================================================================
+
+name: 'gcr.io/cloud-builders/docker'
+id: Build-Backend-Image
+waitFor: ['Test-Backend'] # Ensures tests pass before building
+args:
+
+'build'
+
+'-t'
+
+'gcr.io/$PROJECT_ID/password-backend'
+
+'.'
+dir: 'backend'
+
+==================================================================
+
+Step 3: Push Docker Image to Google Container Registry
+
+==================================================================
+
+name: 'gcr.io/cloud-builders/docker'
+id: Push-Backend-Image
+waitFor: ['Build-Backend-Image']
+args:
+
+'push'
+
+'gcr.io/$PROJECT_ID/password-backend'
+
+==================================================================
+
+Step 4: Deploy to Cloud Run (Backend)
+
+Uses the newly pushed image.
+
+It reuses existing environment variables set in the Cloud Run service.
+
+==================================================================
+
+name: 'gcr.io/cloud-builders/gcloud'
+id: Deploy-Backend
+waitFor: ['Push-Backend-Image']
+args:
+
+'run'
+
+'deploy'
+
+'password-backend' # Cloud Run service name
+
+'--image'
+
+'gcr.io/$PROJECT_ID/password-backend'
+
+'--region'
+
+'${_REGION}'
+
+'--platform'
+
+'managed'
+
+'--allow-unauthenticated'
+
+Use --update-env-vars to preserve the existing ones in Cloud Run (MONGO_URI, SECRET_KEY, FRONTEND_URL)
+
+'--update-env-vars'
+
+'FRONTEND_URL=${FRONTEND_URL},MONGO_URI=${MONGO_URI},SECRET_KEY=${SECRET_KEY}'
+
+General build configuration
+
+options:
+machineType: 'E2_HIGHCPU_8'
