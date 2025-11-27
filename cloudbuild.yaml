@@ -1,3 +1,5 @@
+logging: CLOUD_LOGGING_ONLY
+
 substitutions:
   # The region for the Cloud Run deployment
   _REGION: us-central1
@@ -13,7 +15,7 @@ steps:
     args:
       - -c
       - |
-          # Install dependencies, including cryptography and pytest
+          Install dependencies, including cryptography and pytest
           pip install -r requirements.txt
 
           # Run tests
