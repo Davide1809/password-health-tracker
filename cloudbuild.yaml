@@ -6,8 +6,11 @@ substitutions:
 # BUILD OPTIONS (Fixes the logging/service_account conflict)
 # ==================================================================
 options:
-  # This setting tells Cloud Build to use the standard, user-owned regional log bucket.
-  # This satisfies the requirement when a service account is specified, resolving the error.
+  # This setting tells Cloud Build to use the standard, user-owned
+  # regional log bucket.
+  #
+  # This satisfies the requirement when a service account is
+  # specified, resolving the error.
   default_logs_bucket_behavior: 'REGIONAL_USER_OWNED_BUCKET'
 
 steps:
@@ -21,10 +24,13 @@ steps:
     args:
       - -c
       - |
-          Install dependencies, including cryptography and pytest
+          Install dependencies
           pip install -r requirements.txt
 
-          Run tests
+          FIX: Set a dummy SECRET_KEY environment variable.
+          This prevents the Fernet initialization crash in app.py during the test import.
+          export SECRET_KEY='A_MOCK_KEY_FOR_TESTING_ONLY_MUST_BE_32_BYTES_OR_MORE'
+
           echo "--- Executing Unit Tests ---"
           pytest
           if [ $$? -ne 0 ]; then
@@ -74,4 +80,6 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--update-env-vars'
+
+      # IMPORTANT: These variables must be defined as substitutions in your Cloud Build Trigger
       - 'FRONTEND_URL=${_FRONTEND_URL},MONGO_URI=${_MONGO_URI},SECRET_KEY=${_SECRET_KEY}'
