@@ -1,68 +1,91 @@
 import pytest
-from app import hash_password, check_password, check_email_format, check_password_strength
+import json
+import os
+from werkzeug.security import generate_password_hash, check_password_hash # Import hashing functions from Werkzeug
+from app import app, users_collection, passwords_collection # Assuming app and collections are exported by app.py
 
-# =================================================================
-# Test Utility Functions (No Database Access Needed)
-# =================================================================
-
-def test_password_hashing_consistency():
-    """Verifies that hashing produces different output for the same input (random salt)
-       but that the checking function succeeds."""
-    password = "MySecurePassword123!"
+# Set up a test client
+@pytest.fixture
+def client():
+    # Use test configuration
+    app.config['TESTING'] = True
+    # Ensure no cookies are sent during tests (if you want to test unauthenticated access)
+    # or handle cookies specifically in tests if required.
     
-    # Hashing should always be different for security reasons
-    hashed1 = hash_password(password)
-    hashed2 = hash_password(password)
+    # We must mock the environment variables that are checked in app.py's __main__ block
+    os.environ['SECRET_KEY'] = 'test_secret_key'
+    os.environ['MONGO_URI'] = 'mongodb://localhost:27017/test_db'
+    os.environ['ENCRYPTION_KEY'] = 'a' * 43 # Dummy key for Fernet initialization
     
-    assert hashed1 != hashed2
+    with app.test_client() as client:
+        # Clear the database before each test run (CRITICAL for isolated tests)
+        users_collection.delete_many({})
+        passwords_collection.delete_many({})
+        yield client
+
+# --- Helper function for test setup (if needed) ---
+def register_test_user(client, email='test@example.com', password='Password123'):
+    return client.post(
+        '/api/signup',
+        data=json.dumps({'email': email, 'password': password}),
+        content_type='application/json'
+    )
+
+# --- Test Cases ---
+
+def test_signup_successful(client):
+    """Test user registration."""
+    response = register_test_user(client)
+    assert response.status_code == 201
+    data = json.loads(response.data)
+    assert 'User created' in data['message']
     
-    # But checking must still work
-    assert check_password(password, hashed1)
-    assert check_password(password, hashed2)
+    # Check if user exists in DB
+    user = users_collection.find_one({'email': 'test@example.com'})
+    assert user is not None
+    # Check if the session was created
+    assert 'Set-Cookie' in response.headers
+
+def test_login_successful(client):
+    """Test user login after successful signup."""
+    register_test_user(client) # Signup first
     
-def test_password_check_failure():
-    """Verifies that the password check fails for incorrect passwords."""
-    password = "MySecurePassword123!"
-    wrong_password = "WrongPassword123!"
-    hashed_password = hash_password(password)
+    # Now log in
+    response = client.post(
+        '/api/login',
+        data=json.dumps({'email': 'test@example.com', 'password': 'Password123'}),
+        content_type='application/json'
+    )
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert 'Login successful' in data['message']
+    assert 'Set-Cookie' in response.headers
+
+def test_analyze_password_requires_auth(client):
+    """Test that password analysis is protected."""
+    # Attempt to analyze without logging in
+    response = client.post(
+        '/api/analyze',
+        data=json.dumps({'password': 'weak'}),
+        content_type='application/json'
+    )
+    assert response.status_code == 401
+    data = json.loads(response.data)
+    assert 'Authentication required' in data['message']
+
+def test_analyze_password_successful(client):
+    """Test successful password analysis after login."""
+    register_test_user(client) # Log in
     
-    assert not check_password(wrong_password, hashed_password)
-
-# =================================================================
-# Test Email Validation
-# =================================================================
-
-def test_email_format_valid():
-    """Verifies that valid email addresses pass the format check."""
-    assert check_email_format("test@example.com") == True
-    assert check_email_format("user.name@sub.domain.co") == True
-
-def test_email_format_invalid():
-    """Verifies that invalid email addresses fail the format check."""
-    assert check_email_format("invalid-email") == False
-    assert check_email_format("missing@domain") == False
-    assert check_email_format("user@.com") == False
-
-# =================================================================
-# Test Password Strength Check
-# =================================================================
-
-def test_password_strength_valid():
-    """Verifies that a strong password passes all strength checks."""
-    assert check_password_strength("StrongP@ss123") == True
-
-def test_password_strength_too_short():
-    """Verifies that a password that is too short fails."""
-    assert check_password_strength("Short1!") == False
-
-def test_password_strength_no_uppercase():
-    """Verifies that a password missing an uppercase letter fails."""
-    assert check_password_strength("strongp@ss123") == False
-
-def test_password_strength_no_number():
-    """Verifies that a password missing a number fails."""
-    assert check_password_strength("StrongP@ss!") == False
+    # Analyze a password
+    response = client.post(
+        '/api/analyze',
+        data=json.dumps({'password': 'AStrongPassword123!'}),
+        content_type='application/json'
+    )
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert 'score' in data
+    assert data['score'] == 4 # A strong password should get a score of 4
     
-def test_password_strength_no_symbol():
-    """Verifies that a password missing a symbol fails."""
-    assert check_password_strength("StrongPass123") == False
+# Add more tests for add_password, get_passwords, and logout routes here...
