@@ -1,9 +1,17 @@
 import pytest
 import json
 import os
+import sys
 import base64
 import mongomock
-# Import the main application module (renamed to main for clarity)
+
+# --- CRITICAL FIX: Ensure 'backend' module is discoverable ---
+# Add the project root (which contains the 'backend' folder) to the Python path.
+# This resolves the ModuleNotFoundError when running tests inside the 'backend' folder.
+# It tells Python: "Look one directory up (..), that's where the 'backend' package starts."
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import the main application module (now this works)
 import backend.main as main_app 
 
 # =================================================================
@@ -37,18 +45,18 @@ def client():
     main_app.app.config['TESTING'] = True
     
     # 2. Set environment variables required by main.py for test context
-    os.environ['SECRET_KEY'] = 'test_secret_key'
     os.environ['MONGO_URI'] = 'mongodb://mock/test_db' 
     os.environ['FRONTEND_URL'] = 'http://test.com'
     
-    # 3. Generate a valid Fernet key for encryption/decryption in tests
-    test_fernet_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
-    os.environ['ENCRYPTION_KEY'] = test_fernet_key
+    # 3. Use a deterministic key for testing the encryption/decryption logic
+    test_secret = 'a_very_secure_test_secret_key_that_is_long_enough'
+    os.environ['SECRET_KEY'] = test_secret
     
     # 4. Re-initialize the Fernet key object in the main app module after patching the environment
     try:
-        # NOTE: We use the function from main.py to get the key
-        main_app.ENCRYPTION_KEY = main_app.get_fernet_key(os.environ['SECRET_KEY'])
+        # Re-apply the config/key setup from main.py
+        main_app.app.config['SECRET_KEY'] = test_secret
+        main_app.ENCRYPTION_KEY = main_app.get_fernet_key(test_secret)
         main_app.fernet = main_app.Fernet(main_app.ENCRYPTION_KEY)
         print("Test Fernet key initialized successfully.")
     except Exception as e:
@@ -103,7 +111,6 @@ def test_login_successful(client):
 
 def test_analyze_password_successful(client):
     """Test successful password analysis (mocked zxcvbn) without auth required."""
-    # Since the analyze endpoint doesn't require auth in main.py, we test it directly.
     response = client.post(
         '/api/analyze',
         data=json.dumps({'password': 'AStrongPassword123!'}),
@@ -112,7 +119,6 @@ def test_analyze_password_successful(client):
     assert response.status_code == 200
     data = json.loads(response.data)
     assert 'score' in data
-    # Mock zxcvbn result for long password
     assert data['score'] == 4
     
 def test_password_management_flow(client):
@@ -149,43 +155,3 @@ def test_password_management_flow(client):
     # Check decryption worked
     assert stored_password['site_name'] == 'MySocialMedia'
     assert stored_password['password'] == 'SecretPassword42'
-
-# =================================================================
-# Old Unit Tests (Moved to a style compatible with the new structure)
-# =================================================================
-
-# NOTE: The following unit tests were previously dependent on the app.py utility functions,
-# but those functions were removed from main.py, making these tests invalid.
-# Since hashing and strength checks are now inside the main app logic (and thus tested 
-# by the integration tests above), I will comment out the old unit tests 
-# to ensure the file runs without importing non-existent utilities.
-# If you want to keep strict unit tests, you'd need to expose those internal 
-# functions from backend/main.py.
-
-# def test_password_hashing_consistency():
-#     # ... Test body ...
-#     pass
-# def test_password_check_failure():
-#     # ... Test body ...
-#     pass
-# def test_email_format_valid():
-#     # ... Test body ...
-#     pass
-# def test_email_format_invalid():
-#     # ... Test body ...
-#     pass
-# def test_password_strength_valid():
-#     # ... Test body ...
-#     pass
-# def test_password_strength_too_short():
-#     # ... Test body ...
-#     pass
-# def test_password_strength_no_uppercase():
-#     # ... Test body ...
-#     pass
-# def test_password_strength_no_number():
-#     # ... Test body ...
-#     pass
-# def test_password_strength_no_symbol():
-#     # ... Test body ...
-#     pass
