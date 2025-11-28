@@ -5,14 +5,15 @@ import sys
 import base64
 import mongomock
 
-# --- CRITICAL FIX: Ensure 'backend' module is discoverable ---
-# Add the project root (which contains the 'backend' folder) to the Python path.
+# --- CRITICAL FIX 1: Ensure 'backend' package is discoverable ---
+# Add the project root (the directory containing the 'backend' folder) to the Python path.
 # This resolves the ModuleNotFoundError when running tests inside the 'backend' folder.
-# It tells Python: "Look one directory up (..), that's where the 'backend' package starts."
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import the main application module (now this works)
-import backend.main as main_app 
+# --- CRITICAL FIX 2: Correct Module Name ---
+# The application file is app.py, not main.py. 
+# Import the main application module correctly.
+import backend.app as main_app 
 
 # =================================================================
 # MOCKING FIX: Fixtures for Database and Test Client
@@ -44,7 +45,7 @@ def client():
     # 1. Configure the Flask app for testing
     main_app.app.config['TESTING'] = True
     
-    # 2. Set environment variables required by main.py for test context
+    # 2. Set environment variables required by app.py for test context
     os.environ['MONGO_URI'] = 'mongodb://mock/test_db' 
     os.environ['FRONTEND_URL'] = 'http://test.com'
     
@@ -54,7 +55,7 @@ def client():
     
     # 4. Re-initialize the Fernet key object in the main app module after patching the environment
     try:
-        # Re-apply the config/key setup from main.py
+        # Re-apply the config/key setup from app.py
         main_app.app.config['SECRET_KEY'] = test_secret
         main_app.ENCRYPTION_KEY = main_app.get_fernet_key(test_secret)
         main_app.fernet = main_app.Fernet(main_app.ENCRYPTION_KEY)
