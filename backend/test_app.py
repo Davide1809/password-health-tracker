@@ -8,22 +8,22 @@ import app
 
 # --- Pytest Fixtures ---
 
-# This fixture MUST run first and automatically to patch the MongoDB connection.
-@pytest.fixture(scope="session", autouse=True)
+# CRITICAL FIX: Removed scope="session" to resolve ScopeMismatch error.
+# This fixture now defaults to function scope, allowing it to use the monkeypatch fixture.
+@pytest.fixture(autouse=True)
 def mock_mongo_client(monkeypatch):
     """
     Patches the real pymongo.MongoClient with the in-memory mongomock.MongoClient 
-    before the app module is imported and initialized. This prevents any network 
-    connection attempts during testing.
+    for each test run. It also handles database cleanup (teardown).
     """
-    # 1. Replace the MongoClient import in the app module's namespace
+    # 1. Patch the real MongoClient import with mongomock's
+    # Note: This is crucial as it replaces the class definition before any test uses it.
     monkeypatch.setattr('app.MongoClient', mongomock.MongoClient)
     
     # 2. Force the app to use the TESTING flag
     app.app.config['TESTING'] = True
     
-    # 3. Re-initialize the client within the app module after patching
-    # This ensures that app.client uses the MockMongoClient now.
+    # 3. Re-initialize the client within the app module to point to the mock instance
     # Note: We pass a fake URI since MockMongoClient accepts it but ignores it.
     app.client = app.MongoClient('mongodb://mockdb:27017/testdb')
     app.db = app.client.password_health_tracker
@@ -33,35 +33,19 @@ def mock_mongo_client(monkeypatch):
     # Yield control to the tests
     yield
     
-    # Cleanup (though mongomock instances are usually ephemeral)
+    # Cleanup after each test run (Teardown phase)
     app.users_collection.delete_many({})
     app.passwords_collection.delete_many({})
-
-
-# Helper to get the authenticated user ID for the test session
-def get_user_id(client):
-    """Retrieves the user_id from the session cookie after login."""
-    # Find the user inserted during the test run
-    user = app.users_collection.find_one({'email': 'testuser@example.com'})
-    return str(user['_id']) if user else None
 
 
 # Fixture to provide the Flask test client
 @pytest.fixture
 def client():
-    # Note: TESTING flag is already set in mock_mongo_client fixture
+    # Note: The TESTING flag is set in the mock_mongo_client fixture
     app.app.config['SESSION_COOKIE_SECURE'] = False
     app.app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
     with app.app.test_client() as client:
         yield client
-
-# Fixture to clear the database before each test
-@pytest.fixture(autouse=True)
-def clean_db():
-    app.users_collection.delete_many({})
-    app.passwords_collection.delete_many({})
-    # The yield allows the test to run, and the cleanup happens after
-    yield
 
 # --- Helper Functions for Tests ---
 
