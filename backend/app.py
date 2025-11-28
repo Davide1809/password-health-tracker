@@ -186,7 +186,6 @@ def logout():
 # --- Password Health Routes ---
 
 @app.route('/api/analyze', methods=['POST'])
-# FIX: Removed @require_auth. Password analysis should be public utility.
 def analyze_password():
     data = request.get_json()
     password = data.get('password')
@@ -247,7 +246,7 @@ def get_passwords():
             decrypted_password = "[Decryption Failed]"
 
         passwords_list.append({
-            'id': str(doc['_id']()), # Use ObjectId's callable string representation if mongomock is used
+            'id': str(doc['_id']), # FIX: Removed the unnecessary () which caused TypeError: 'ObjectId' object is not callable
             'site_name': doc['site_name'],
             'username': doc['username'],
             'password': decrypted_password, 
