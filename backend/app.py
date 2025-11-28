@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from functools import wraps
+import hashlib # NEW: For generating a stable Fernet key
 
 from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
@@ -13,7 +14,11 @@ from cryptography.fernet import Fernet
 from zxcvbn import zxcvbn 
 import base64
 from dotenv import load_dotenv
-from bson.objectid import ObjectId # Needed for delete route
+from bson.objectid import ObjectId 
+
+# Conditionally import mock client for testing environment
+if os.environ.get('TESTING') == 'True':
+    from mongomock import MongoClient as MockMongoClient
 
 # Load environment variables from .env file (for local development)
 load_dotenv()
@@ -34,8 +39,6 @@ if not SECRET_KEY:
 app.config['SECRET_KEY'] = SECRET_KEY
 
 # Configure session cookies for secure cross-site interaction
-# IMPORTANT: These settings are critical for Flask sessions to work 
-# with cookies in a cross-origin environment (Frontend <-> Backend)
 app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
@@ -54,12 +57,17 @@ passwords_collection = None
 DB_CONNECTED = False
 
 def initialize_db():
-    """Initializes the MongoDB connection based on MONGO_URI."""
+    """Initializes the MongoDB connection, using MockDB if in testing mode."""
     global client, db, users_collection, passwords_collection, DB_CONNECTED
     
     if os.environ.get('TESTING') == 'True':
-        # Skip initialization if running in testing environment
-        print("DB Initialization skipped in TEST mode.")
+        # FIX: Use mongomock for unit tests to prevent 503 errors.
+        print("DB Initialization using MockMongoDB for testing.")
+        client = MockMongoClient()
+        db = client.password_health_tracker
+        users_collection = db.users
+        passwords_collection = db.passwords 
+        DB_CONNECTED = True 
         return
 
     if not MONGO_URI:
@@ -88,18 +96,20 @@ initialize_db()
 def ensure_db_connection():
     """Returns an error response if the database is not connected, otherwise None."""
     if not DB_CONNECTED:
-        # For Cloud Run, this usually means an environment variable is missing or wrong.
         return jsonify({'message': 'Database service unavailable.'}), 503
     return None
 
 # --- Cryptography Setup (Fernet) ---
 
 def get_fernet_key(secret_key):
-    """Generates a Fernet key from the Flask secret key."""
-    # The key MUST be 32 URL-safe base64-encoded bytes.
-    key_bytes = secret_key.encode('utf-8')
-    key_hash = base64.urlsafe_b64encode(key_bytes).decode('utf-8')[:44]
-    return key_hash.encode('utf-8')
+    """Generates a secure Fernet key (32 bytes) from the Flask secret key using SHA256."""
+    # FIX: Ensure the key is exactly 32 bytes (44 characters when B64-encoded) for Fernet
+    # Hash the secret key to get exactly 32 bytes (256 bits)
+    hash_bytes = hashlib.sha256(secret_key.encode('utf-8')).digest()
+    
+    # Base64 encode the 32 bytes to get the 44-character Fernet key
+    fernet_key = base64.urlsafe_b64encode(hash_bytes)
+    return fernet_key
 
 try:
     ENCRYPTION_KEY = get_fernet_key(SECRET_KEY)
@@ -141,7 +151,8 @@ def require_auth(f):
             return jsonify({'message': 'Unauthorized. Please log in.'}), 401
         
         # 3. Check User Existence
-        user = users_collection.find_one({'_id': user_id})
+        # Fetch only the _id if possible, more efficient
+        user = users_collection.find_one({'_id': user_id}, {'_id': 1})
         if not user:
              # Clear session if user not found (e.g., user deleted)
             session.pop('user_id', None)
@@ -220,7 +231,7 @@ def signup():
     
     # Immediately log in the user upon successful signup
     session['user_id'] = user_data['_id']
-    session.modified = True # <<< CRITICAL FIX: Ensure the session is marked for saving
+    session.modified = True # CRITICAL FIX: Ensure the session is marked for saving
     
     # Create a response object to set the cookie
     response = make_response(jsonify({'message': 'User created and logged in.'}), 201)
@@ -245,7 +256,7 @@ def login():
     if user and check_password_hash(user['password'], password):
         # Set session cookie
         session['user_id'] = user['_id']
-        session.modified = True # <<< CRITICAL FIX: Ensure the session is marked for saving
+        session.modified = True # CRITICAL FIX: Ensure the session is marked for saving
         
         # Create a response object to set the cookie
         response = make_response(jsonify({'message': 'Login successful'}), 200)
