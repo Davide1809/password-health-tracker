@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import backend.app as main_app 
 
 # =================================================================
-# FIX: Mocking Setup - Changed scope to 'function' and removed autouse
+# FIX: Mocking Setup - Changed scope to 'function'
 # =================================================================
 
 @pytest.fixture(scope='function')
@@ -21,9 +21,8 @@ def mock_database_connection(monkeypatch):
     """
     Fixture to replace the real MongoDB connection with an in-memory mock.
     Scope is set to function to allow the use of the 'monkeypatch' fixture.
-    The collections are reset in the 'client' fixture setup.
     """
-    print("Setting up MongoDB Mock...")
+    # print("Setting up MongoDB Mock...")
     # 1. Create a mock client and database
     mock_client = mongomock.MongoClient()
     mock_db = mock_client.password_health_tracker
@@ -34,7 +33,7 @@ def mock_database_connection(monkeypatch):
     monkeypatch.setattr(main_app, 'db', mock_db)
     monkeypatch.setattr(main_app, 'users_collection', mock_db.users)
     monkeypatch.setattr(main_app, 'passwords_collection', mock_db.passwords)
-    print("MongoDB Mock Setup Complete.")
+    # print("MongoDB Mock Setup Complete.")
 
 @pytest.fixture
 def client(mock_database_connection):
@@ -55,25 +54,26 @@ def client(mock_database_connection):
     os.environ['SECRET_KEY'] = test_secret
     
     # 4. Re-initialize the Fernet key object in the main app module after patching the environment
+    #    This is necessary to ensure the Fernet object uses the test_secret key for decryption in tests.
     try:
-        # Re-apply the config/key setup from app.py
         main_app.app.config['SECRET_KEY'] = test_secret
-        # We need to ensure the Fernet object uses the mocked key
+        
+        # Now that get_fernet_key is defined in main_app, we can call it here.
         main_app.ENCRYPTION_KEY = main_app.get_fernet_key(test_secret)
         main_app.fernet = main_app.Fernet(main_app.ENCRYPTION_KEY)
-        print("Test Fernet key initialized successfully.")
+        
     except Exception as e:
+        # This error handling is now safe and primarily for debugging.
         print(f"Error during test Fernet key re-initialization: {e}")
         
     
     with main_app.app.test_client() as client:
         # 5. Clear the mock collections before each test run for isolation
-        # Note: We must check for the collections since the mock_database_connection fixture
-        # guarantees their existence on the main_app module after its execution.
-        if hasattr(main_app, 'users_collection'):
+        if hasattr(main_app, 'users_collection') and main_app.users_collection is not None:
             main_app.users_collection.delete_many({})
-        if hasattr(main_app, 'passwords_collection'):
+        if hasattr(main_app, 'passwords_collection') and main_app.passwords_collection is not None:
             main_app.passwords_collection.delete_many({})
+            
         yield client
 
 # --- Helper function for integration test setup ---
@@ -118,6 +118,7 @@ def test_login_successful(client):
 
 def test_analyze_password_successful(client):
     """Test successful password analysis (mocked zxcvbn) without auth required."""
+    # This test should now pass because @require_auth was removed from /api/analyze in app.py
     response = client.post(
         '/api/analyze',
         data=json.dumps({'password': 'AStrongPassword123!'}),
@@ -133,11 +134,13 @@ def test_password_management_flow(client):
     """Test saving and retrieving passwords."""
     # 1. Login to establish session
     register_test_user(client)
-    client.post(
+    login_response = client.post(
         '/api/login',
         data=json.dumps({'email': 'test@example.com', 'password': 'Password123'}),
         content_type='application/json'
     )
+    # Ensure login was successful and we have a valid session/cookie
+    assert login_response.status_code == 200
     
     # 2. Save a password
     save_data = {
