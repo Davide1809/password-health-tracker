@@ -43,6 +43,7 @@ except Exception as e:
 
 # --- Encryption Setup ---
 def get_fernet_key(secret_key):
+    # Derive a 32-byte key from the secret key for Fernet
     key_bytes = secret_key.encode('utf-8')
     key_base64 = base64.urlsafe_b64encode(key_bytes.ljust(32)[:32])
     return key_base64
@@ -54,7 +55,7 @@ except Exception as e:
     print(f"Error initializing Fernet encryption: {e}")
     fernet = None
 
-# --- Utility Functions (Updated check_password_strength) ---
+# --- Utility Functions (Updated check_password_strength to enforce complexity) ---
 
 def hash_password(password):
     """Hashes the password using Werkzeug's secure method."""
@@ -77,9 +78,10 @@ def check_password_strength(password):
     Returns True if score >= 3 AND all complexity rules are met, False otherwise.
     Complexity Rules: Min 8 chars, 1 uppercase, 1 lowercase, 1 digit, 1 symbol.
     """
-    # 1. Minimum Length Check (standard practice)
+    # 1. Minimum Length Check
     MIN_LENGTH = 8
     if len(password) < MIN_LENGTH:
+        # Fails test_password_strength_too_short
         return False
         
     # 2. Character Class Checks (enforced by unit tests)
@@ -91,12 +93,14 @@ def check_password_strength(password):
     complexity_met = has_uppercase and has_lowercase and has_digit and has_symbol
     
     if not complexity_met:
+        # Fails: no uppercase, no number, or no symbol tests
         return False
 
     # 3. Zxcvbn Score Check (must be 3 or higher)
     zxcvbn_score = zxcvbn(password)['score']
     
-    return zxcvbn_score >= 3 # Now returns True only if BOTH complexity and score >= 3 are met
+    # Passes test_password_strength_valid (must be >= 3 and complexity met)
+    return zxcvbn_score >= 3
 
 
 def encrypt_data(data):
@@ -141,13 +145,13 @@ def signup():
 
     # Using the fixed boolean check_password_strength
     if not check_password_strength(password): 
-        # Re-run zxcvbn just to get the detailed feedback for the user
+        # Re-run zxcvbn and check complexity rules for detailed feedback
         analysis = zxcvbn(password)
-        # Check if the score or explicit rules failed and give feedback
-        warning = analysis['feedback']['warning'] or "Password is not strong enough."
         
-        # Add specific complexity feedback if missing (e.g., if the zxcvbn feedback is vague)
-        feedback_messages = [warning]
+        # Build detailed feedback messages
+        feedback_messages = [analysis['feedback']['warning'] or "Password is not strong enough."]
+        
+        # Specific complexity rule failure checks
         if len(password) < 8:
              feedback_messages.append("Must be at least 8 characters long.")
         if not any(c.isupper() for c in password):
