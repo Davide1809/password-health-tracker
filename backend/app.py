@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from zxcvbn import zxcvbn 
 import base64
 
@@ -33,6 +33,11 @@ app.config.update(
 CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
 # --- Database Setup (MongoDB) ---
+client = None
+db = None
+users_collection = None
+passwords_collection = None
+
 try:
     # MONGO_URI is defined above using os.environ.get
     client = MongoClient(MONGO_URI)
@@ -41,12 +46,8 @@ try:
     passwords_collection = db.passwords 
     print("Successfully connected to MongoDB.")
 except Exception as e:
-    print(f"Error connecting to MongoDB: {e}")
-    # In a real environment, you might want to exit or use a fallback
-    client = None
-    db = None
-    users_collection = None
-    passwords_collection = None
+    print(f"FATAL: Error connecting to MongoDB: {e}")
+    # Collections remain None if connection fails
 
 # --- Encryption Setup ---
 # Derive encryption key from SECRET_KEY for Fernet. 
@@ -68,15 +69,25 @@ else:
 
 def encrypt_data(data):
     """Encrypts a string using Fernet."""
+    if not fernet:
+        # This shouldn't happen if initialization above is correct, but safe check
+        raise RuntimeError("Fernet encryption key not initialized.")
     return fernet.encrypt(data.encode()).decode()
 
 def decrypt_data(data):
     """Decrypts a Fernet token string."""
+    if not fernet:
+        raise RuntimeError("Fernet encryption key not initialized.")
     try:
+        # Fernet expects the input to be bytes
         return fernet.decrypt(data.encode()).decode()
+    except InvalidToken:
+        # Specific exception for key mismatch
+        print("CRITICAL DECRYPTION ERROR: Invalid token detected. Key mismatch or data corruption.")
+        return "[Decryption Error: Invalid Key/Token]"
     except Exception as e:
-        print(f"Decryption error: {e}")
-        return "[Decryption Error]"
+        print(f"Decryption error (General): {e}")
+        return "[Decryption Error: General Failure]"
 
 # --- Authentication Decorator ---
 
@@ -86,6 +97,12 @@ def require_auth(f):
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
             return jsonify({'message': 'Unauthorized. Please log in.'}), 401
+        
+        # Check if database collections are initialized
+        if passwords_collection is None or users_collection is None:
+            print("FATAL: Database connection failed. Denying request.")
+            return jsonify({'message': 'Server is currently experiencing database issues. Please try again later.'}), 503
+            
         return f(*args, **kwargs)
     return decorated_function
 
@@ -113,6 +130,9 @@ def health_check():
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
+    if users_collection is None:
+        return jsonify({'message': 'Server is currently experiencing database issues.'}), 503
+        
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
@@ -150,6 +170,9 @@ def signup():
 
 @app.route('/api/login', methods=['POST'])
 def login():
+    if users_collection is None:
+        return jsonify({'message': 'Server is currently experiencing database issues.'}), 503
+
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
@@ -199,8 +222,12 @@ def add_password():
 
     user_id = session.get('user_id')
     
-    # Encrypt the sensitive password data before storing
-    encrypted_password = encrypt_data(password)
+    try:
+        # Encrypt the sensitive password data before storing
+        encrypted_password = encrypt_data(password)
+    except RuntimeError as e:
+        print(f"Encryption setup error: {e}")
+        return jsonify({'message': 'Server encryption setup failed.'}), 500
 
     password_entry = {
         'user_id': user_id,
@@ -220,12 +247,25 @@ def add_password():
 def get_passwords():
     user_id = session.get('user_id')
     
-    # Retrieve passwords for the current user, sorted by creation date (newest first)
-    cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
+    try:
+        # Retrieve passwords for the current user, sorted by creation date (newest first)
+        cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
+    except Exception as e:
+        print(f"Database query failed: {e}")
+        return jsonify({'message': 'Failed to retrieve data from database.'}), 500
     
     passwords_list = []
+    
     for doc in cursor:
         decrypted_password = decrypt_data(doc['encrypted_password'])
+        
+        # Check if decryption failed critically due to key mismatch
+        if "Invalid Key/Token" in decrypted_password:
+             # Stop processing the list and return an error for the whole request
+             print("Aborting password retrieval due to critical decryption failure.")
+             return jsonify({
+                 'message': 'Critical error: Failed to decrypt stored passwords. The encryption key may have changed since the data was stored. Please contact support.'
+             }), 500
         
         passwords_list.append({
             'id': str(doc['_id']),
@@ -275,14 +315,13 @@ if __name__ == '__main__':
         app.config['SECRET_KEY'] = 'default_secret_key_for_local_dev_12345678'
     
     # Re-check and set up Fernet key for local run if it wasn't set earlier due to missing env var
-    # The 'fernet' object is being modified in the global scope here.
     if FERNET_KEY is None:
         # We now use the secret key set above in the app config
         new_fernet_key = get_fernet_key(app.config['SECRET_KEY'])
         
         # Modify the module-level variables directly
         FERNET_KEY = new_fernet_key
-        fernet = Fernet(FERNET_KEY) # <--- This assignment is sufficient.
+        fernet = Fernet(FERNET_KEY)
         print("Fernet key initialized for local execution.")
 
 
