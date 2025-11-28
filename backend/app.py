@@ -18,9 +18,24 @@ import base64
 app = Flask(__name__)
 
 # Load environment variables (set during gcloud deploy)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+SECRET_KEY_ENV = os.environ.get('SECRET_KEY')
 MONGO_URI = os.environ.get('MONGO_URI')
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
+# *** STARTUP SANITY CHECK LOGGING (NEW) ***
+# We check if the critical environment variables are loaded from the environment
+if SECRET_KEY_ENV and MONGO_URI:
+    # Print success message, only showing the length of the keys for security
+    print(f"CRITICAL SANITY CHECK: Keys Found! SECRET_KEY length: {len(SECRET_KEY_ENV)}, MONGO_URI status: Found.")
+else:
+    # Print failure message clearly
+    print(f"CRITICAL SANITY CHECK: FAILED TO LOAD ENVIRONMENT VARIABLES.")
+    if not SECRET_KEY_ENV:
+        print("FATAL ERROR: SECRET_KEY is missing from environment variables.")
+    if not MONGO_URI:
+        print("FATAL ERROR: MONGO_URI is missing from environment variables.")
+# *** END SANITY CHECK LOGGING ***
+
+app.config['SECRET_KEY'] = SECRET_KEY_ENV
 
 # Configure session cookies for secure cross-site interaction
 app.config.update(
@@ -30,7 +45,7 @@ app.config.update(
 )
 
 # Allow CORS only from the frontend URL, and allow credentials (cookies)
-CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
+CORS(app, supports_credentials=True, origins=['https://password-frontend-749522457256.web.app']) # Assuming this is your frontend URL
 
 # --- Database Setup (MongoDB) ---
 client = None
@@ -39,19 +54,21 @@ users_collection = None
 passwords_collection = None
 
 try:
-    # MONGO_URI is defined above using os.environ.get
-    client = MongoClient(MONGO_URI)
-    db = client.password_health_tracker
-    users_collection = db.users
-    passwords_collection = db.passwords 
-    print("Successfully connected to MongoDB.")
+    if MONGO_URI:
+        client = MongoClient(MONGO_URI)
+        client.admin.command('ping') # Try to ping the database immediately
+        db = client.password_health_tracker
+        users_collection = db.users
+        passwords_collection = db.passwords 
+        print("Successfully connected to MongoDB.")
+    else:
+        print("WARNING: MONGO_URI not set. Database operations will fail.")
 except Exception as e:
-    print(f"FATAL: Error connecting to MongoDB: {e}")
+    print(f"FATAL: Error connecting to MongoDB at startup: {e}")
     # Collections remain None if connection fails
 
 # --- Encryption Setup ---
 # Derive encryption key from SECRET_KEY for Fernet. 
-# It must be 32 URL-safe base64-encoded bytes.
 def get_fernet_key(secret_key):
     import hashlib
     key_hash = hashlib.sha256(secret_key.encode()).digest()
@@ -66,6 +83,8 @@ if app.config['SECRET_KEY']:
 else:
     # Use a dummy key if running without a real secret key
     fernet = Fernet(b'default_fernets_key_for_testing_00') 
+    print("WARNING: Using default Fernet key. Check SECRET_KEY environment variable.")
+
 
 def encrypt_data(data):
     """Encrypts a string using Fernet."""
@@ -82,21 +101,16 @@ def decrypt_data(data):
     if not fernet:
         raise RuntimeError("Fernet encryption key not initialized.")
     
-    # Ensure data is a non-empty string before attempting encode/decrypt
     if not isinstance(data, str) or not data:
-         # Log this specific data issue
          print(f"CRITICAL DECRYPTION ERROR: Input data is invalid or empty: {data}")
          return "[Decryption Error: Invalid Data Type or Empty String]"
 
     try:
-        # Fernet expects the input to be bytes
         return fernet.decrypt(data.encode()).decode()
     except InvalidToken:
-        # Specific exception for key mismatch
         print("CRITICAL DECRYPTION ERROR: Invalid token detected. Key mismatch or data corruption.")
         return "[Decryption Error: Invalid Key/Token]"
     except Exception as e:
-        # Catch other errors, like base64 decoding failure if the string is malformed
         print(f"Decryption error (General): {e}. Malformed token: {data[:30]}...")
         return "[Decryption Error: General Failure]"
 
@@ -159,20 +173,18 @@ def session_status():
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
+    # If this fails, the DB connection failed during startup
     if users_collection is None:
         return jsonify({'message': 'Server is currently experiencing database issues.'}), 503
         
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
-    user_name = data.get('user_name') # Maps to "Your Name"
+    user_name = data.get('user_name') 
 
-    # CRITICAL: Print the received data to the server logs to debug the 'missing fields' issue.
-    print(f"SIGNUP ATTEMPT RECEIVED DATA: User Name: '{user_name}', Email: '{email}', Password Length: {len(password) if password else 0}")
-
-
+    # If the request fails before here, the issue is ENV variables or network.
+    
     if not all([email, password, user_name]):
-        # This is the line that returns the error you see
         return jsonify({'message': 'Missing required fields.'}), 400
     
     # 1. Check password strength
@@ -182,7 +194,6 @@ def signup():
 
     # 2. Check if user already exists
     if users_collection.find_one({'email': email}):
-        # This should return a different error message, which the frontend might misinterpret
         return jsonify({'message': 'User already exists.'}), 409
 
     # 3. Hash password and store user
@@ -219,7 +230,6 @@ def login():
     user = users_collection.find_one({'email': email})
 
     # 2. Verify password
-    # FIX: Use .get() to safely access 'password_hash' and prevent KeyError if the field is missing.
     password_hash = user.get('password_hash') if user else None
 
     if user and password_hash and check_password_hash(password_hash, password):
@@ -232,7 +242,6 @@ def login():
 
         return jsonify({'message': 'Login successful.', 'user_name': user_name}), 200
     else:
-        # If user is None, password_hash is missing, or password check fails
         return jsonify({'message': 'Invalid credentials.'}), 401
 
 @app.route('/api/logout', methods=['POST'])
@@ -286,7 +295,6 @@ def add_password():
 def get_passwords():
     user_id = session.get('user_id')
     
-    # --- WRAP ENTIRE LOGIC IN CATCH-ALL TRY/EXCEPT FOR DEBUGGING ---
     try:
         # Retrieve passwords for the current user, sorted by creation date (newest first)
         cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
@@ -297,23 +305,17 @@ def get_passwords():
             encrypted_data = doc.get('encrypted_password')
             
             if not encrypted_data or not isinstance(encrypted_data, str):
-                # If the required field is missing or the wrong type, skip the document 
-                # and log a severe warning, but don't crash the whole route.
                 print(f"SEVERE WARNING: Document with ID {doc['_id']} is missing 'encrypted_password' field or it is not a string. Skipping document.")
-                continue # Skip this corrupted document
+                continue 
                 
             decrypted_password = decrypt_data(encrypted_data)
             
-            # --- CRITICAL ERROR CHECK ---
-            # If decryption failed critically due to key mismatch, abort the entire list retrieval
             if "[Decryption Error: Invalid Key/Token]" in decrypted_password:
                  print("Aborting password retrieval due to critical decryption failure.")
-                 # Immediately return 500 with the diagnostic message
                  return jsonify({
                      'message': 'Critical error: Failed to decrypt stored passwords. The encryption key may have changed since the data was stored. Please contact support.'
                  }), 500
             
-            # If decryption failed for other reasons (like bad base64), treat as empty/failed
             if "[Decryption Error: General Failure]" in decrypted_password or "[Decryption Error: Invalid Data Type or Empty String]" in decrypted_password:
                  print(f"General decryption failure for document {doc['_id']}. Showing placeholder.")
                  decrypted_password = "[Decryption Failed]"
@@ -322,20 +324,18 @@ def get_passwords():
                 'id': str(doc['_id']),
                 'site_name': doc['site_name'],
                 'username': doc['username'],
-                'password': decrypted_password, # Decrypt before sending to the frontend
+                'password': decrypted_password, 
                 'created_at': doc['created_at'].isoformat()
             })
             
         return jsonify(passwords_list), 200
 
     except Exception as e:
-        # This catch-all block is purely for debugging the root 500 cause.
         import traceback
         error_traceback = traceback.format_exc()
         print(f"FATAL UNHANDLED EXCEPTION IN get_passwords: {e}")
         print(f"TRACEBACK: {error_traceback}")
         
-        # Return a generic 500 response, but the detailed traceback is now in the Cloud Run logs.
         return jsonify({'message': 'Internal Server Error: Failed to process passwords list due to an unexpected exception. Check server logs for full details.'}), 500
 
 
@@ -344,14 +344,11 @@ def get_passwords():
 def delete_password(password_id):
     user_id = session.get('user_id')
 
-    # Validate if the ID is a valid MongoDB ObjectId format
     if not ObjectId.is_valid(password_id):
         return jsonify({'message': 'Invalid password ID format.'}), 400
 
-    # Convert string ID to ObjectId
     obj_id = ObjectId(password_id)
 
-    # Delete the document, ensuring it belongs to the current user
     result = passwords_collection.delete_one({
         '_id': obj_id, 
         'user_id': user_id
@@ -371,33 +368,31 @@ def resource_not_found(e):
 
 
 if __name__ == '__main__':
-    # Default values for local testing only
+    # This block usually runs only in local development, but good practice to check if it's triggering
     if not all(os.environ.get(k) for k in ['SECRET_KEY', 'MONGO_URI']):
         print("WARNING: Running locally without required environment variables.")
-        app.config['SECRET_KEY'] = 'default_secret_key_for_local_dev_12345678'
-    
-    # Re-check and set up Fernet key for local run if it wasn't set earlier due to missing env var
-    if FERNET_KEY is None:
-        # We now use the secret key set above in the app config
-        new_fernet_key = get_fernet_key(app.config['SECRET_KEY'])
+        # Only set defaults if running locally AND they are not defined in the environment
+        if not os.environ.get('SECRET_KEY'):
+            app.config['SECRET_KEY'] = 'default_secret_key_for_local_dev_12345678'
         
-        # Modify the module-level variables directly
-        FERNET_KEY = new_fernet_key
-        fernet = Fernet(FERNET_KEY)
-        print("Fernet key initialized for local execution.")
+        if not os.environ.get('MONGO_URI'):
+            MONGO_URI = 'mongodb://localhost:27017/'
+        
+        # Re-check and set up Fernet key for local run if it wasn't set earlier due to missing env var
+        if FERNET_KEY is None:
+            new_fernet_key = get_fernet_key(app.config['SECRET_KEY'])
+            FERNET_KEY = new_fernet_key
+            fernet = Fernet(FERNET_KEY)
 
-
-    # For local development with a local MongoDB instance
-    if not os.environ.get('MONGO_URI'):
-        MONGO_URI = 'mongodb://localhost:27017/'
-        try:
-             client = MongoClient(MONGO_URI)
-             db = client.password_health_tracker
-             users_collection = db.users
-             passwords_collection = db.passwords
-             print("Connected to local MongoDB.")
-        except Exception as e:
-             print(f"Error connecting to local MongoDB: {e}")
+        # Re-initialize DB connection for local run
+        if not os.environ.get('MONGO_URI') and MONGO_URI:
+            try:
+                client = MongoClient(MONGO_URI)
+                db = client.password_health_tracker
+                users_collection = db.users
+                passwords_collection = db.passwords
+                print("Connected to local MongoDB.")
+            except Exception as e:
+                print(f"Error connecting to local MongoDB: {e}")
              
-    # Running the Flask app
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
