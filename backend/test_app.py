@@ -4,9 +4,7 @@ from app import app, users_collection, passwords_collection
 from bson.objectid import ObjectId
 # Import MongoClient from mongomock if the environment is a test environment
 # In this simulated environment, we assume the collections are correctly mocked.
-
-# Mocking setup (assumed to be in the testing environment's setup phase)
-# Note: I'm redefining this section to ensure the helpers are included.
+# NOTE: The actual mock import is now handled conditionally inside app.py
 
 # --- Helper Functions for Tests ---
 
@@ -15,7 +13,7 @@ def register_test_user(client, email='testuser@example.com', password='StrongPas
     user_data = {
         'email': email,
         'password': password,
-        'user_name': 'TestUser' # Ensure user_name is present (Fix for 400 signup error)
+        'user_name': 'TestUser' 
     }
     return client.post(
         '/api/signup', 
@@ -35,9 +33,10 @@ def login_test_user(client, email='testuser@example.com', password='StrongPasswo
         content_type='application/json'
     )
 
-# --- Actual Tests (Remaining tests from the original file, ensured to match names) ---
+# --- Actual Tests ---
 
 # Fixture to clear the database before each test (assuming mongomock is used)
+# This fixture is crucial for mongomock to ensure tests are isolated.
 @pytest.fixture(autouse=True)
 def clean_db():
     users_collection.delete_many({})
@@ -46,9 +45,8 @@ def clean_db():
 # Flask test client fixture
 @pytest.fixture
 def client():
-    # Set up the test client with app configuration
+    # CRITICAL FIX: Set the TESTING flag to true
     app.config['TESTING'] = True
-    # Relax cookie settings for testing environment
     app.config['SESSION_COOKIE_SECURE'] = False
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
     with app.test_client() as client:
@@ -57,24 +55,18 @@ def client():
 def test_root_path(client):
     """Test the basic health check path."""
     response = client.get('/')
-    # FIX: Expect 200 now that '/' route is implemented
     assert response.status_code == 200
     assert json.loads(response.data)['status'] == 'ok'
 
 def test_signup_successful(client):
     """Test user registration via the API."""
     response = register_test_user(client)
-    # FIX: Expect 201 Created
     assert response.status_code == 201
 
 def test_login_successful(client):
     """Test user login after successful signup."""
-    register_test_user(client) # Signup first
-    
-    # Now log in
+    register_test_user(client) 
     response = login_test_user(client)
-    
-    # FIX: Expect 200 now that session is correctly set in app.py
     assert response.status_code == 200
 
 def test_password_management_flow(client):
@@ -82,8 +74,6 @@ def test_password_management_flow(client):
     # 1. Login to establish session
     register_test_user(client)
     login_response = login_test_user(client)
-    
-    # Assert login success (prerequisite, fixed by previous tests)
     assert login_response.status_code == 200
 
     # 2. Save a password
@@ -117,7 +107,6 @@ def test_get_passwords_empty(client):
     login_test_user(client)
 
     get_response = client.get('/api/passwords')
-    # FIX: Expect 200 now that session is correctly set
     assert get_response.status_code == 200
     passwords = json.loads(get_response.data)
     assert len(passwords) == 0
@@ -141,7 +130,6 @@ def test_delete_password_successful(client):
     assert get_response.status_code == 200
     passwords = json.loads(get_response.data)
     
-    # FIX: This now succeeds because the login and GET request succeed.
     assert len(passwords) == 1
     password_id = passwords[0]['id']
 
@@ -162,11 +150,9 @@ def test_delete_password_invalid_id(client):
 
     # 2. Attempt deletion with a non-ObjectId string
     delete_response = client.delete('/api/passwords/invalid_id_format')
-    # FIX: Expect 400 now that the InvalidId handling is implemented in app.py
     assert delete_response.status_code == 400
     assert 'Invalid password ID format.' in delete_response.get_data(as_text=True)
 
-# Add other expected tests that were successful previously
 def test_password_strength_check(client):
     """Test that signup fails with a weak password (based on len < 8)."""
     weak_user_data = {
@@ -186,13 +172,11 @@ def test_login_invalid_credentials(client):
     """Test login failure with bad password."""
     register_test_user(client)
     response = login_test_user(client, password='WrongPassword123!')
-    # FIX: Expect 401 Unauthorized for bad credentials
     assert response.status_code == 401
     assert 'Invalid credentials.' in response.get_data(as_text=True)
 
 def test_login_non_existent_user(client):
     """Test login failure for a user that hasn't signed up."""
     response = login_test_user(client, email='nonexistent@example.com')
-    # FIX: Expect 401 Unauthorized.
     assert response.status_code == 401
     assert 'Invalid credentials.' in response.get_data(as_text=True)

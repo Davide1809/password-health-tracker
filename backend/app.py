@@ -3,17 +3,25 @@ import secrets
 import json
 import re
 from datetime import datetime, timedelta
-from functools import wraps # Added for require_auth
+from functools import wraps 
 
 from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
+# Import standard MongoClient and the mock client
 from pymongo import MongoClient
+# We conditionally import mongomock to avoid errors if it's not installed,
+# but since it is in requirements.txt, this is safe for Cloud Build.
+try:
+    from mongomock import MongoClient as MockMongoClient
+except ImportError:
+    MockMongoClient = None
+
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.fernet import Fernet
 from zxcvbn import zxcvbn 
-from bson.objectid import ObjectId # Import ObjectId for database IDs
+from bson.objectid import ObjectId 
 import base64
-from pymongo.errors import ConnectionFailure, OperationFailure
+from pymongo.errors import ConnectionFailure
 from bson.errors import InvalidId
 
 
@@ -30,7 +38,6 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='None',
-    # Ensure session key generation is robust (necessary for session usage)
     SECRET_KEY=app.config['SECRET_KEY'] if app.config['SECRET_KEY'] else secrets.token_urlsafe(32)
 )
 
@@ -38,22 +45,30 @@ app.config.update(
 CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
 # --- Database Setup (MongoDB) ---
-try:
-    client = MongoClient(MONGO_URI)
-    db = client.password_health_tracker
-    users_collection = db.users
-    passwords_collection = db.passwords 
-    
-    # Ensure indices for performance/uniqueness
-    users_collection.create_index('email', unique=True)
-    passwords_collection.create_index('user_id')
 
-    # Test connection
-    client.admin.command('ping')
-    print("Successfully connected to MongoDB.")
-    
-except ConnectionFailure as e:
-    print(f"ERROR: Could not connect to MongoDB: {e}")
+# CRITICAL FIX: Use MockMongoClient during testing
+if app.config.get('TESTING') and MockMongoClient:
+    print("Using MockMongoClient for testing.")
+    client = MockMongoClient()
+else:
+    print("Using standard MongoClient.")
+    client = MongoClient(MONGO_URI)
+
+db = client.password_health_tracker
+users_collection = db.users
+passwords_collection = db.passwords 
+
+# Ensure indices are created only if we are using a real MongoDB client
+if not app.config.get('TESTING'):
+    try:
+        users_collection.create_index('email', unique=True)
+        passwords_collection.create_index('user_id')
+        # Test connection
+        client.admin.command('ping')
+        print("Successfully connected to MongoDB.")
+    except ConnectionFailure as e:
+        print(f"ERROR: Could not connect to MongoDB: {e}")
+        # In a real environment, you might want to raise here, but we'll let it proceed for now.
 
 # --- Encryption Setup ---
 
@@ -62,20 +77,30 @@ FERNET_KEY_BASE64 = os.environ.get('FERNET_KEY')
 if FERNET_KEY_BASE64 and len(base64.urlsafe_b64decode(FERNET_KEY_BASE64)) == 32:
     fernet = Fernet(FERNET_KEY_BASE64)
 else:
-    print("WARNING: FERNET_KEY is missing or invalid. Using a placeholder key.")
-    # For local testing without a proper key
-    temp_key = Fernet.generate_key()
-    fernet = Fernet(temp_key)
+    # Use a fixed, deterministic key for the mock environment
+    if app.config.get('TESTING'):
+        # For testing, we need a stable key for consistent encryption/decryption
+        # This is a valid 32-byte URL-safe base64 string
+        fixed_test_key = 'WjVUNjF0cThxV0h2Skt1NnB6SGV0ZGFyVjZ2ZkFhVks='
+        fernet = Fernet(fixed_test_key)
+    else:
+        print("WARNING: FERNET_KEY is missing or invalid. Using a placeholder key.")
+        temp_key = Fernet.generate_key()
+        fernet = Fernet(temp_key)
 
 
 def encrypt_data(data):
     """Encrypts a string using Fernet."""
     if not isinstance(data, str):
         data = str(data)
+    # The token is already bytes, no need to re-encode
     return fernet.encrypt(data.encode('utf-8'))
 
 def decrypt_data(token):
     """Decrypts a Fernet token."""
+    # The token argument passed to decrypt is expected to be bytes
+    if isinstance(token, str):
+        token = token.encode('utf-8')
     return fernet.decrypt(token).decode('utf-8')
 
 
@@ -83,8 +108,8 @@ def decrypt_data(token):
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # FIX: Ensure user_id is in the session
         if 'user_id' not in session:
+            # Check if user_id is in the session (standard Flask session handling)
             return jsonify({'message': 'Unauthorized access: Session required.'}), 401
         
         return f(*args, **kwargs)
@@ -92,7 +117,6 @@ def require_auth(f):
 
 # --- Routes ---
 
-# FIX 1: Add missing root health check route
 @app.route('/', methods=['GET'])
 def index():
     """Health check endpoint."""
@@ -103,34 +127,27 @@ def index():
 def signup():
     data = request.get_json(silent=True)
     
-    # FIX 2a: Ensure JSON data is present (400 check)
     if not data:
         return jsonify({'message': 'Invalid JSON or missing data.'}), 400
 
     email = data.get('email')
     password = data.get('password')
-    # FIX 2b: Assume 'user_name' is also required or desired
     user_name = data.get('user_name', email.split('@')[0] if email else 'User') 
 
     if not email or not password:
         return jsonify({'message': 'Missing email or password.'}), 400
 
-    # Basic email format validation
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         return jsonify({'message': 'Invalid email format.'}), 400
 
-    # Check for existing user
     if users_collection.find_one({'email': email}):
         return jsonify({'message': 'User already exists.'}), 409
 
-    # Password strength check (minimal)
     if len(password) < 8:
         return jsonify({'message': 'Password must be at least 8 characters long.'}), 400
 
-    # Hash the password
     password_hash = generate_password_hash(password)
 
-    # Insert new user into MongoDB
     user_data = {
         'email': email,
         'user_name': user_name,
@@ -158,8 +175,6 @@ def login():
     user = users_collection.find_one({'email': email})
 
     if user and check_password_hash(user['password_hash'], password):
-        # FIX 3: Set session variables upon successful login
-        # We need the user's ID as a string for storage in Flask session
         session['user_id'] = str(user['_id']) 
         session['user_email'] = email
         
@@ -169,7 +184,6 @@ def login():
             'user_name': user.get('user_name', email.split('@')[0])
         }), 200
     
-    # Return 401 for invalid credentials
     return jsonify({'message': 'Invalid credentials.'}), 401
 
 @app.route('/api/logout', methods=['POST'])
@@ -177,9 +191,6 @@ def login():
 def logout():
     session.pop('user_id', None)
     session.pop('user_email', None)
-    # Clear session cookie by setting it to expire immediately
-    # NOTE: In a test environment, session management can be tricky.
-    # The default Flask test client manages cookies automatically.
     response = make_response(jsonify({'message': 'Logout successful.'}), 200)
     return response
 
@@ -199,13 +210,15 @@ def save_password():
     if not all([site_name, username, password]):
         return jsonify({'message': 'Missing site name, username, or password.'}), 400
 
-    encrypted_password = encrypt_data(password)
-
+    # Ensure the encrypted data is stored as bytes or a decodable string representation
+    encrypted_password_bytes = encrypt_data(password)
+    
     password_entry = {
         'user_id': user_id,
         'site_name': site_name,
         'username': username,
-        'encrypted_password': encrypted_password,
+        # Store as base64 string for easier storage/retrieval in BSON/JSON context
+        'encrypted_password': encrypted_password_bytes.decode('utf-8'),
         'created_at': datetime.utcnow()
     }
 
@@ -224,15 +237,15 @@ def get_passwords():
     passwords_list = []
     for doc in cursor:
         try:
-            decrypted_password = decrypt_data(doc['encrypted_password'])
+            # We stored it as a string, so we need to encode it back to bytes for Fernet
+            encrypted_token_bytes = doc['encrypted_password'].encode('utf-8')
+            decrypted_password = decrypt_data(encrypted_token_bytes)
         except Exception as e:
-            # Handle decryption errors gracefully 
             print(f"Decryption error for document {doc.get('_id')}: {e}")
             decrypted_password = "[Error: Could not decrypt]"
 
         
         passwords_list.append({
-            # Ensure the key is 'id' as expected by the test
             'id': str(doc['_id']), 
             'site_name': doc['site_name'],
             'username': doc['username'],
@@ -248,20 +261,16 @@ def delete_password(password_id):
     user_id = session.get('user_id')
     
     try:
-        # Validate that the ID is a valid MongoDB ObjectId
         password_object_id = ObjectId(password_id)
     except InvalidId:
-        # FIX: Return 400 for invalid ID format
         return jsonify({'message': 'Invalid password ID format.'}), 400 
 
-    # Delete the document, ensuring it belongs to the current user
     result = passwords_collection.delete_one({
         '_id': password_object_id,
         'user_id': user_id
     })
 
     if result.deleted_count == 0:
-        # If deleted_count is 0, the ID was either not found or didn't belong to the user
         return jsonify({'message': 'Password not found or unauthorized.'}), 404
         
     return jsonify({'message': 'Password deleted successfully.'}), 200
@@ -279,5 +288,4 @@ if __name__ == '__main__':
         print("WARNING: Running locally without required environment variables.")
         app.config['SECRET_KEY'] = 'default_secret_key_for_testing'
     
-    # Run the app locally (note: gunicorn is used in production)
     app.run(host='0.0.0.0', port=5000, debug=True)
