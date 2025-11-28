@@ -7,23 +7,21 @@ import mongomock
 
 # --- CRITICAL FIX 1: Ensure 'backend' package is discoverable ---
 # Add the project root (the directory containing the 'backend' folder) to the Python path.
-# This resolves the ModuleNotFoundError when running tests inside the 'backend' folder.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # --- CRITICAL FIX 2: Correct Module Name ---
-# The application file is app.py, not main.py. 
-# Import the main application module correctly.
 import backend.app as main_app 
 
 # =================================================================
-# MOCKING FIX: Fixtures for Database and Test Client
+# FIX: Mocking Setup - Changed scope to 'function' and removed autouse
 # =================================================================
 
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(scope='function')
 def mock_database_connection(monkeypatch):
     """
-    Fixture to replace the real MongoDB connection with an in-memory mock 
-    before any tests run. This is crucial for isolated testing.
+    Fixture to replace the real MongoDB connection with an in-memory mock.
+    Scope is set to function to allow the use of the 'monkeypatch' fixture.
+    The collections are reset in the 'client' fixture setup.
     """
     print("Setting up MongoDB Mock...")
     # 1. Create a mock client and database
@@ -39,8 +37,11 @@ def mock_database_connection(monkeypatch):
     print("MongoDB Mock Setup Complete.")
 
 @pytest.fixture
-def client():
-    """Test client fixture configured for Flask testing."""
+def client(mock_database_connection):
+    """
+    Test client fixture configured for Flask testing.
+    Depends on 'mock_database_connection' to ensure the database is mocked first.
+    """
     
     # 1. Configure the Flask app for testing
     main_app.app.config['TESTING'] = True
@@ -57,6 +58,7 @@ def client():
     try:
         # Re-apply the config/key setup from app.py
         main_app.app.config['SECRET_KEY'] = test_secret
+        # We need to ensure the Fernet object uses the mocked key
         main_app.ENCRYPTION_KEY = main_app.get_fernet_key(test_secret)
         main_app.fernet = main_app.Fernet(main_app.ENCRYPTION_KEY)
         print("Test Fernet key initialized successfully.")
@@ -66,8 +68,12 @@ def client():
     
     with main_app.app.test_client() as client:
         # 5. Clear the mock collections before each test run for isolation
-        main_app.users_collection.delete_many({})
-        main_app.passwords_collection.delete_many({})
+        # Note: We must check for the collections since the mock_database_connection fixture
+        # guarantees their existence on the main_app module after its execution.
+        if hasattr(main_app, 'users_collection'):
+            main_app.users_collection.delete_many({})
+        if hasattr(main_app, 'passwords_collection'):
+            main_app.passwords_collection.delete_many({})
         yield client
 
 # --- Helper function for integration test setup ---
@@ -120,7 +126,8 @@ def test_analyze_password_successful(client):
     assert response.status_code == 200
     data = json.loads(response.data)
     assert 'score' in data
-    assert data['score'] == 4
+    # zxcvbn returns max score 4 for a strong password
+    assert data['score'] == 4 
     
 def test_password_management_flow(client):
     """Test saving and retrieving passwords."""
@@ -153,6 +160,7 @@ def test_password_management_flow(client):
     assert len(passwords) == 1
     stored_password = passwords[0]
     
-    # Check decryption worked
+    # Check decryption worked and data integrity
     assert stored_password['site_name'] == 'MySocialMedia'
+    assert stored_password['username'] == 'testuser'
     assert stored_password['password'] == 'SecretPassword42'
