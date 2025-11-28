@@ -5,10 +5,11 @@ import sys
 import base64
 import mongomock
 
-# --- CRITICAL FIX: Relative Import for app.py ---
-# Since test_app.py and app.py are now in the same 'backend' directory,
-# we use a relative import to correctly reference the main app module.
-from . import app as main_app 
+# --- CRITICAL FIX: Absolute Import for app.py ---
+# The previous relative import (from . import app) fails because when pytest
+# is run, Python does not recognize 'backend' as a package parent.
+# We change this to an absolute import to reference the app module directly.
+from backend import app as main_app 
 
 # =================================================================
 # Mocking Setup 
