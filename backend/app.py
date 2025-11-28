@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken # Imported InvalidToken
 from zxcvbn import zxcvbn 
 import base64
 
@@ -75,7 +75,10 @@ def encrypt_data(data):
     return fernet.encrypt(data.encode()).decode()
 
 def decrypt_data(data):
-    """Decrypts a Fernet token string."""
+    """
+    Decrypts a Fernet token string. 
+    Handles InvalidToken exception which often points to a key mismatch.
+    """
     if not fernet:
         raise RuntimeError("Fernet encryption key not initialized.")
     try:
@@ -259,9 +262,9 @@ def get_passwords():
     for doc in cursor:
         decrypted_password = decrypt_data(doc['encrypted_password'])
         
-        # Check if decryption failed critically due to key mismatch
-        if "Invalid Key/Token" in decrypted_password:
-             # Stop processing the list and return an error for the whole request
+        # --- CRITICAL ERROR CHECK ---
+        # If decryption failed critically due to key mismatch, abort the entire list retrieval
+        if "[Decryption Error: Invalid Key/Token]" in decrypted_password:
              print("Aborting password retrieval due to critical decryption failure.")
              return jsonify({
                  'message': 'Critical error: Failed to decrypt stored passwords. The encryption key may have changed since the data was stored. Please contact support.'
