@@ -4,6 +4,7 @@ import os
 import sys
 import base64
 import mongomock
+from bson.objectid import ObjectId
 
 # --- CRITICAL FIX: Direct Local Import ---
 # Since test_app.py is in the same directory as app.py, 
@@ -158,3 +159,51 @@ def test_password_management_flow(client):
     assert stored_password['site_name'] == 'MySocialMedia'
     assert stored_password['username'] == 'testuser'
     assert stored_password['password'] == 'SecretPassword42'
+
+def test_delete_password_successful(client):
+    """Test successful deletion of a password."""
+    # 1. Login
+    register_test_user(client)
+    client.post('/api/login', data=json.dumps({'email': 'test@example.com', 'password': 'Password123'}), content_type='application/json')
+    
+    # 2. Save a password
+    save_data = {
+        'site_name': 'ToDelete',
+        'username': 'tempuser',
+        'password': 'tempPassword'
+    }
+    client.post('/api/passwords', data=json.dumps(save_data), content_type='application/json')
+    
+    # 3. Get the ID of the saved password
+    get_response = client.get('/api/passwords')
+    passwords = json.loads(get_response.data)
+    password_id = passwords[0]['id']
+    
+    # 4. Delete the password
+    delete_response = client.delete(f'/api/passwords/{password_id}')
+    assert delete_response.status_code == 200
+    
+    # 5. Verify deletion
+    verify_response = client.get('/api/passwords')
+    verify_passwords = json.loads(verify_response.data)
+    assert len(verify_passwords) == 0
+
+def test_delete_password_invalid_id(client):
+    """Test deletion with an invalid ID format."""
+    # 1. Login
+    register_test_user(client)
+    client.post('/api/login', data=json.dumps({'email': 'test@example.com', 'password': 'Password123'}), content_type='application/json')
+    
+    # 2. Attempt deletion with a non-ObjectId string
+    delete_response = client.delete('/api/passwords/invalid_id_format')
+    assert delete_response.status_code == 400
+    data = json.loads(delete_response.data)
+    assert 'Invalid password ID format' in data['message']
+
+def test_delete_password_unauthorized(client):
+    """Test deletion when not logged in."""
+    # Attempt to delete without logging in
+    delete_response = client.delete('/api/passwords/some_id_placeholder')
+    assert delete_response.status_code == 401
+    data = json.loads(delete_response.data)
+    assert 'Unauthorized' in data['message']
