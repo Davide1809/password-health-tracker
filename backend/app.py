@@ -81,6 +81,13 @@ def decrypt_data(data):
     """
     if not fernet:
         raise RuntimeError("Fernet encryption key not initialized.")
+    
+    # Ensure data is a non-empty string before attempting encode/decrypt
+    if not isinstance(data, str) or not data:
+         # Log this specific data issue
+         print(f"CRITICAL DECRYPTION ERROR: Input data is invalid or empty: {data}")
+         return "[Decryption Error: Invalid Data Type or Empty String]"
+
     try:
         # Fernet expects the input to be bytes
         return fernet.decrypt(data.encode()).decode()
@@ -89,7 +96,8 @@ def decrypt_data(data):
         print("CRITICAL DECRYPTION ERROR: Invalid token detected. Key mismatch or data corruption.")
         return "[Decryption Error: Invalid Key/Token]"
     except Exception as e:
-        print(f"Decryption error (General): {e}")
+        # Catch other errors, like base64 decoding failure if the string is malformed
+        print(f"Decryption error (General): {e}. Malformed token: {data[:30]}...")
         return "[Decryption Error: General Failure]"
 
 # --- Authentication Decorator ---
@@ -255,20 +263,35 @@ def get_passwords():
         cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
     except Exception as e:
         print(f"Database query failed: {e}")
-        return jsonify({'message': 'Failed to retrieve data from database.'}), 500
+        # Return a non-500 error if possible, but 500 for general database failure is acceptable
+        return jsonify({'message': 'Failed to retrieve data from database.'}), 503
     
     passwords_list = []
     
     for doc in cursor:
-        decrypted_password = decrypt_data(doc['encrypted_password'])
+        encrypted_data = doc.get('encrypted_password')
+        
+        if not encrypted_data or not isinstance(encrypted_data, str):
+            # If the required field is missing or the wrong type, skip the document 
+            # and log a severe warning, but don't crash the whole route.
+            print(f"SEVERE WARNING: Document with ID {doc['_id']} is missing 'encrypted_password' field or it is not a string. Skipping document.")
+            continue # Skip this corrupted document
+            
+        decrypted_password = decrypt_data(encrypted_data)
         
         # --- CRITICAL ERROR CHECK ---
         # If decryption failed critically due to key mismatch, abort the entire list retrieval
         if "[Decryption Error: Invalid Key/Token]" in decrypted_password:
              print("Aborting password retrieval due to critical decryption failure.")
+             # Immediately return 500 with the diagnostic message
              return jsonify({
                  'message': 'Critical error: Failed to decrypt stored passwords. The encryption key may have changed since the data was stored. Please contact support.'
              }), 500
+        
+        # If decryption failed for other reasons (like bad base64), treat as empty/failed
+        if "[Decryption Error: General Failure]" in decrypted_password:
+             print(f"General decryption failure for document {doc['_id']}. Showing placeholder.")
+             decrypted_password = "[Decryption Failed]"
         
         passwords_list.append({
             'id': str(doc['_id']),
