@@ -246,7 +246,7 @@ def get_passwords():
             decrypted_password = "[Decryption Failed]"
 
         passwords_list.append({
-            'id': str(doc['_id']), # FIX: Removed the unnecessary () which caused TypeError: 'ObjectId' object is not callable
+            'id': str(doc['_id']), 
             'site_name': doc['site_name'],
             'username': doc['username'],
             'password': decrypted_password, 

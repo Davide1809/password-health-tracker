@@ -6,11 +6,11 @@ import base64
 import mongomock
 
 # --- CRITICAL FIX 1: Ensure 'backend' package is discoverable ---
-# Add the project root (the directory containing the 'backend' folder) to the Python path.
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Since we moved files to the root, we need to adjust how the main app is imported.
+# Assuming app.py is now at the root, it can be imported directly.
 
 # --- CRITICAL FIX 2: Correct Module Name ---
-import backend.app as main_app 
+import app as main_app 
 
 # =================================================================
 # FIX: Mocking Setup - Changed scope to 'function'
@@ -22,7 +22,6 @@ def mock_database_connection(monkeypatch):
     Fixture to replace the real MongoDB connection with an in-memory mock.
     Scope is set to function to allow the use of the 'monkeypatch' fixture.
     """
-    # print("Setting up MongoDB Mock...")
     # 1. Create a mock client and database
     mock_client = mongomock.MongoClient()
     mock_db = mock_client.password_health_tracker
@@ -33,7 +32,6 @@ def mock_database_connection(monkeypatch):
     monkeypatch.setattr(main_app, 'db', mock_db)
     monkeypatch.setattr(main_app, 'users_collection', mock_db.users)
     monkeypatch.setattr(main_app, 'passwords_collection', mock_db.passwords)
-    # print("MongoDB Mock Setup Complete.")
 
 @pytest.fixture
 def client(mock_database_connection):
