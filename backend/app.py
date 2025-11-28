@@ -195,7 +195,10 @@ def login():
     user = users_collection.find_one({'email': email})
 
     # 2. Verify password
-    if user and check_password_hash(user['password_hash'], password):
+    # FIX: Use .get() to safely access 'password_hash' and prevent KeyError if the field is missing.
+    password_hash = user.get('password_hash') if user else None
+
+    if user and password_hash and check_password_hash(password_hash, password):
         # 3. Create session
         user_id = str(user['_id'])
         user_name = user.get('user_name', 'User')
@@ -205,6 +208,7 @@ def login():
 
         return jsonify({'message': 'Login successful.', 'user_name': user_name}), 200
     else:
+        # If user is None, password_hash is missing, or password check fails
         return jsonify({'message': 'Invalid credentials.'}), 401
 
 @app.route('/api/logout', methods=['POST'])
