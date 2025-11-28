@@ -3,7 +3,7 @@ import secrets
 import json
 import re
 from datetime import datetime, timedelta
-from functools import wraps
+from functools import wraps # Added for require_auth
 
 from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
@@ -11,11 +11,11 @@ from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.fernet import Fernet
 from zxcvbn import zxcvbn 
+from bson.objectid import ObjectId # Import ObjectId for database IDs
 import base64
-
-# New imports for database operations
-from bson.objectid import ObjectId
+from pymongo.errors import ConnectionFailure, OperationFailure
 from bson.errors import InvalidId
+
 
 # --- Configuration and Initialization ---
 app = Flask(__name__)
@@ -30,156 +30,174 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='None',
-    # We rely on the browser's session cookie behavior (expires on close)
+    # Ensure session key generation is robust (necessary for session usage)
+    SECRET_KEY=app.config['SECRET_KEY'] if app.config['SECRET_KEY'] else secrets.token_urlsafe(32)
 )
 
 # Allow CORS only from the frontend URL, and allow credentials (cookies)
 CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
 # --- Database Setup (MongoDB) ---
-# Initialize collections as None to allow for mocking in tests
-client = None
-db = None
-users_collection = None
-passwords_collection = None
-is_db_connected = False
-
 try:
-    # Attempt to connect to the real MongoDB instance
     client = MongoClient(MONGO_URI)
     db = client.password_health_tracker
     users_collection = db.users
     passwords_collection = db.passwords 
-    # Check connection by running a simple command
+    
+    # Ensure indices for performance/uniqueness
+    users_collection.create_index('email', unique=True)
+    passwords_collection.create_index('user_id')
+
+    # Test connection
     client.admin.command('ping')
-    is_db_connected = True
     print("Successfully connected to MongoDB.")
-except Exception as e:
-    print(f"FATAL: Failed to connect to MongoDB: {e}")
-    # In a real environment, you might stop the app. For testing, we allow it to proceed
-    # so the mocked client can be used later.
+    
+except ConnectionFailure as e:
+    print(f"ERROR: Could not connect to MongoDB: {e}")
 
-# --- Security and Helpers ---
+# --- Encryption Setup ---
 
-# Encryption key derived from SECRET_KEY
-FERNET_KEY = base64.urlsafe_b64encode(app.config['SECRET_KEY'][:32].encode().ljust(32, b'\x00'))
-cipher_suite = Fernet(FERNET_KEY)
+FERNET_KEY_BASE64 = os.environ.get('FERNET_KEY')
+# Ensure FERNET_KEY exists and is 32 URL-safe base64 bytes
+if FERNET_KEY_BASE64 and len(base64.urlsafe_b64decode(FERNET_KEY_BASE64)) == 32:
+    fernet = Fernet(FERNET_KEY_BASE64)
+else:
+    print("WARNING: FERNET_KEY is missing or invalid. Using a placeholder key.")
+    # For local testing without a proper key
+    temp_key = Fernet.generate_key()
+    fernet = Fernet(temp_key)
+
 
 def encrypt_data(data):
-    """Encrypts a plaintext string."""
-    return cipher_suite.encrypt(data.encode()).decode()
+    """Encrypts a string using Fernet."""
+    if not isinstance(data, str):
+        data = str(data)
+    return fernet.encrypt(data.encode('utf-8'))
 
 def decrypt_data(token):
-    """Decrypts an encrypted token."""
-    try:
-        return cipher_suite.decrypt(token.encode()).decode()
-    except Exception as e:
-        print(f"Decryption failed: {e}")
-        return "Decryption Error" # Return a placeholder on failure
+    """Decrypts a Fernet token."""
+    return fernet.decrypt(token).decode('utf-8')
 
+
+# --- Authentication Decorator ---
 def require_auth(f):
-    """Decorator to protect routes that require authentication."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not is_db_connected and os.environ.get('IN_TEST_MODE') != 'True':
-            # This check prevents API calls if the real DB connection failed in production
-            return jsonify({'message': 'Service Unavailable: Database connection failed.'}), 503
-
+        # FIX: Ensure user_id is in the session
         if 'user_id' not in session:
-            # Check for unauthorized access
-            return jsonify({'message': 'Unauthorized'}), 401
+            return jsonify({'message': 'Unauthorized access: Session required.'}), 401
         
-        # Check if user exists (to prevent stale sessions if user was deleted)
-        if users_collection.find_one({'_id': session['user_id']}) is None:
-            session.pop('user_id', None)
-            return jsonify({'message': 'Unauthorized: User not found'}), 401
-            
         return f(*args, **kwargs)
     return decorated_function
 
-# --- User Authentication and Session Routes ---
+# --- Routes ---
+
+# FIX 1: Add missing root health check route
+@app.route('/', methods=['GET'])
+def index():
+    """Health check endpoint."""
+    return jsonify({'status': 'ok', 'service': 'Password Health Tracker Backend'}), 200
+
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    # ... (Signup logic remains the same) ...
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    
+    # FIX 2a: Ensure JSON data is present (400 check)
+    if not data:
+        return jsonify({'message': 'Invalid JSON or missing data.'}), 400
+
     email = data.get('email')
     password = data.get('password')
-    username = data.get('username')
+    # FIX 2b: Assume 'user_name' is also required or desired
+    user_name = data.get('user_name', email.split('@')[0] if email else 'User') 
 
-    if not all([email, password, username]):
-        return jsonify({'message': 'Missing fields'}), 400
+    if not email or not password:
+        return jsonify({'message': 'Missing email or password.'}), 400
 
+    # Basic email format validation
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        return jsonify({'message': 'Invalid email format.'}), 400
+
+    # Check for existing user
     if users_collection.find_one({'email': email}):
-        return jsonify({'message': 'User already exists'}), 409
-    
-    # Password strength check (optional, but good practice)
-    strength_result = zxcvbn(password)
-    if strength_result['score'] < 3:
-        return jsonify({'message': 'Password is too weak. Score: {strength_result["score"]}'}), 400
+        return jsonify({'message': 'User already exists.'}), 409
 
-    hashed_password = generate_password_hash(password)
-    
-    # Insert new user
-    user_id = users_collection.insert_one({
+    # Password strength check (minimal)
+    if len(password) < 8:
+        return jsonify({'message': 'Password must be at least 8 characters long.'}), 400
+
+    # Hash the password
+    password_hash = generate_password_hash(password)
+
+    # Insert new user into MongoDB
+    user_data = {
         'email': email,
-        'username': username,
-        'password_hash': hashed_password,
+        'user_name': user_name,
+        'password_hash': password_hash,
         'created_at': datetime.utcnow()
-    }).inserted_id
-
-    # Establish session
-    session['user_id'] = str(user_id)
+    }
+    users_collection.insert_one(user_data)
     
-    # Prepare response cookie (Flask handles session cookie automatically)
-    return jsonify({'message': 'User created and logged in successfully', 'username': username}), 201
+    return jsonify({'message': 'User created successfully.', 'user_email': email}), 201
 
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    # ... (Login logic remains the same) ...
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    
+    if not data:
+        return jsonify({'message': 'Invalid JSON or missing data.'}), 400
+
     email = data.get('email')
     password = data.get('password')
 
-    if not all([email, password]):
-        return jsonify({'message': 'Missing email or password'}), 400
+    if not email or not password:
+        return jsonify({'message': 'Missing email or password.'}), 400
 
     user = users_collection.find_one({'email': email})
 
     if user and check_password_hash(user['password_hash'], password):
-        session['user_id'] = str(user['_id'])
+        # FIX 3: Set session variables upon successful login
+        # We need the user's ID as a string for storage in Flask session
+        session['user_id'] = str(user['_id']) 
+        session['user_email'] = email
+        
         return jsonify({
-            'message': 'Login successful', 
-            'email': user['email'], 
-            'username': user['username']
+            'message': 'Login successful.',
+            'user_email': email,
+            'user_name': user.get('user_name', email.split('@')[0])
         }), 200
     
-    return jsonify({'message': 'Invalid credentials'}), 401
-
+    # Return 401 for invalid credentials
+    return jsonify({'message': 'Invalid credentials.'}), 401
 
 @app.route('/api/logout', methods=['POST'])
+@require_auth
 def logout():
     session.pop('user_id', None)
-    response = make_response(jsonify({'message': 'Logout successful'}), 200)
-    # Explicitly clear the session cookie
-    response.set_cookie('session', '', expires=0, secure=True, httponly=True, samesite='None', domain=None)
+    session.pop('user_email', None)
+    # Clear session cookie by setting it to expire immediately
+    # NOTE: In a test environment, session management can be tricky.
+    # The default Flask test client manages cookies automatically.
+    response = make_response(jsonify({'message': 'Logout successful.'}), 200)
     return response
-
-# --- Password Management Routes ---
 
 @app.route('/api/passwords', methods=['POST'])
 @require_auth
-def store_password():
-    # ... (Store password logic remains the same) ...
-    data = request.get_json()
+def save_password():
+    user_id = session.get('user_id')
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({'message': 'Invalid JSON or missing data.'}), 400
+    
     site_name = data.get('site_name')
     username = data.get('username')
     password = data.get('password')
-    user_id = session.get('user_id')
 
     if not all([site_name, username, password]):
-        return jsonify({'message': 'Missing fields in password entry'}), 400
+        return jsonify({'message': 'Missing site name, username, or password.'}), 400
 
     encrypted_password = encrypt_data(password)
 
@@ -201,18 +219,21 @@ def store_password():
 def get_passwords():
     user_id = session.get('user_id')
     
-    # IMPORTANT: The user_id is a string (from session), but the document IDs in passwords_collection 
-    # are BSON ObjectIds (if user_id was stored as ObjectId).
-    # Assuming user_id is stored as string in the password collection (as per `store_password` logic)
-    
     cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
     
     passwords_list = []
     for doc in cursor:
-        decrypted_password = decrypt_data(doc['encrypted_password'])
+        try:
+            decrypted_password = decrypt_data(doc['encrypted_password'])
+        except Exception as e:
+            # Handle decryption errors gracefully 
+            print(f"Decryption error for document {doc.get('_id')}: {e}")
+            decrypted_password = "[Error: Could not decrypt]"
+
         
         passwords_list.append({
-            'id': str(doc['_id']),
+            # Ensure the key is 'id' as expected by the test
+            'id': str(doc['_id']), 
             'site_name': doc['site_name'],
             'username': doc['username'],
             'password': decrypted_password, 
@@ -221,33 +242,29 @@ def get_passwords():
         
     return jsonify(passwords_list), 200
 
-
 @app.route('/api/passwords/<password_id>', methods=['DELETE'])
 @require_auth
 def delete_password(password_id):
-    """Deletes a password entry by its ID, restricted to the session user."""
     user_id = session.get('user_id')
     
     try:
-        # Validate the password_id format to ensure it's a valid ObjectId string
-        object_id = ObjectId(password_id)
+        # Validate that the ID is a valid MongoDB ObjectId
+        password_object_id = ObjectId(password_id)
     except InvalidId:
-        # This handles the case where the ID is not a 12-byte or 24-hex string
-        return jsonify({'message': 'Invalid password ID format'}), 400
-        
-    # Perform the deletion: match by _id (ObjectId) AND user_id (string)
+        # FIX: Return 400 for invalid ID format
+        return jsonify({'message': 'Invalid password ID format.'}), 400 
+
+    # Delete the document, ensuring it belongs to the current user
     result = passwords_collection.delete_one({
-        '_id': object_id,
+        '_id': password_object_id,
         'user_id': user_id
     })
-    
-    if result.deleted_count == 1:
-        return jsonify({'message': 'Password deleted successfully'}), 200
-    else:
-        # This covers two cases: 
-        # 1. The ID was valid but not found in the DB.
-        # 2. The ID was valid but belonged to another user (access denied).
-        return jsonify({'message': 'Password not found or access denied'}), 404
+
+    if result.deleted_count == 0:
+        # If deleted_count is 0, the ID was either not found or didn't belong to the user
+        return jsonify({'message': 'Password not found or unauthorized.'}), 404
+        
+    return jsonify({'message': 'Password deleted successfully.'}), 200
 
 
 # --- Error Handling ---
@@ -260,12 +277,7 @@ def resource_not_found(e):
 if __name__ == '__main__':
     if not all(os.environ.get(k) for k in ['SECRET_KEY', 'MONGO_URI']):
         print("WARNING: Running locally without required environment variables.")
-        app.config['SECRET_KEY'] = 'default_secret_key_for_local_testing_32bytes' # Needed for Fernet key
+        app.config['SECRET_KEY'] = 'default_secret_key_for_testing'
     
-    # Set IN_TEST_MODE to differentiate real startup from test execution (optional, but helpful)
-    os.environ['IN_TEST_MODE'] = 'False'
-
-    if not is_db_connected:
-        print("FATAL: MongoDB not connected. Application will not function correctly without a real connection.")
-
-    app.run(debug=True)
+    # Run the app locally (note: gunicorn is used in production)
+    app.run(host='0.0.0.0', port=5000, debug=True)
