@@ -5,11 +5,11 @@ import sys
 import base64
 import mongomock
 
-# --- CRITICAL FIX: Absolute Import for app.py ---
-# The previous relative import (from . import app) fails because when pytest
-# is run, Python does not recognize 'backend' as a package parent.
-# We change this to an absolute import to reference the app module directly.
-from backend import app as main_app 
+# --- CRITICAL FIX: Direct Local Import ---
+# Since test_app.py is in the same directory as app.py, 
+# we use a direct import to avoid package resolution issues 
+# when pytest is run from the 'backend' directory.
+import app as main_app 
 
 # =================================================================
 # Mocking Setup 
@@ -52,6 +52,7 @@ def client(mock_database_connection):
     # 4. Re-initialize the Fernet key object in the main app module after patching the environment
     try:
         main_app.app.config['SECRET_KEY'] = test_secret
+        # Need to use main_app.get_fernet_key since it's defined in app.py
         main_app.ENCRYPTION_KEY = main_app.get_fernet_key(test_secret)
         main_app.fernet = main_app.Fernet(main_app.ENCRYPTION_KEY)
     except Exception as e:
