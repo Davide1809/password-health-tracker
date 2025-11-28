@@ -139,6 +139,24 @@ def is_strong_password(password):
 def health_check():
     return jsonify({'status': 'ok'}), 200
 
+# --- DEBUGGING ROUTE ---
+@app.route('/api/session-status', methods=['GET'])
+def session_status():
+    """Returns the current user session status for debugging."""
+    if 'user_id' in session:
+        return jsonify({
+            'status': 'Authenticated',
+            'user_id': session.get('user_id'),
+            'user_name': session.get('user_name')
+        }), 200
+    else:
+        return jsonify({
+            'status': 'Not Authenticated',
+            'message': 'No active user session found.'
+        }), 200
+# --- END DEBUGGING ROUTE ---
+
+
 @app.route('/api/signup', methods=['POST'])
 def signup():
     if users_collection is None:
@@ -147,9 +165,14 @@ def signup():
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
-    user_name = data.get('user_name')
+    user_name = data.get('user_name') # Maps to "Your Name"
+
+    # CRITICAL: Print the received data to the server logs to debug the 'missing fields' issue.
+    print(f"SIGNUP ATTEMPT RECEIVED DATA: User Name: '{user_name}', Email: '{email}', Password Length: {len(password) if password else 0}")
+
 
     if not all([email, password, user_name]):
+        # This is the line that returns the error you see
         return jsonify({'message': 'Missing required fields.'}), 400
     
     # 1. Check password strength
@@ -159,6 +182,7 @@ def signup():
 
     # 2. Check if user already exists
     if users_collection.find_one({'email': email}):
+        # This should return a different error message, which the frontend might misinterpret
         return jsonify({'message': 'User already exists.'}), 409
 
     # 3. Hash password and store user
