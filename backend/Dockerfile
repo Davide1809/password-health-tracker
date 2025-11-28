@@ -1,22 +1,23 @@
-# Use an official Python runtime as a parent image
+# Use an official Python runtime image
 FROM python:3.11-slim
 
-# Set the working directory in the container
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy the requirements file into the container
+# Copy the requirements file and install dependencies
+# This is where 'cryptography' and others will be installed
 COPY requirements.txt .
-
-# Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the container
-# This assumes your main Flask file is named app.py
+# Copy the rest of your application source code
+# We need to copy the backend folder, not just the root
+COPY backend/ ./backend/
 COPY . .
 
-# Expose the port your app runs on (Cloud Run defaults to $PORT, but 8080 is a good standard)
+# Cloud Run injects the port via the $PORT environment variable
 ENV PORT 8080
 
-# Run the application using Gunicorn, specifying your app file (app.py) and instance name (app)
-# If your main file is main.py, change 'app:app' to 'main:app'
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
+# Command to run the application using Gunicorn
+# CRITICAL FIX: Changed 'app:app' to 'backend.main:app' 
+# because the Flask app ('app') is inside 'backend/main.py'.
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 backend.main:app
