@@ -54,13 +54,12 @@ except Exception as e:
     print(f"Error initializing Fernet encryption: {e}")
     fernet = None
 
-# --- Utility Functions (Fixed for Test Compatibility) ---
+# --- Utility Functions (Updated check_password_strength) ---
 
 def hash_password(password):
     """Hashes the password using Werkzeug's secure method."""
     return generate_password_hash(password)
 
-# FIX 1: Defined signature to match test call (raw_password, hashed_password)
 def check_password(raw_password, hashed_password):
     """Checks a raw password against a hashed one.
        Uses (raw, hashed) signature to match unit tests.
@@ -72,10 +71,33 @@ def check_email_format(email):
     email_regex = r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$'
     return re.match(email_regex, email) is not None
 
-# FIX 2: Returns boolean (True if strong enough, False otherwise) to satisfy unit test assertions
 def check_password_strength(password):
-    """Checks password strength using zxcvbn. Returns True if score >= 3, False otherwise."""
-    return zxcvbn(password)['score'] >= 3
+    """
+    Checks password strength using traditional complexity rules AND zxcvbn score.
+    Returns True if score >= 3 AND all complexity rules are met, False otherwise.
+    Complexity Rules: Min 8 chars, 1 uppercase, 1 lowercase, 1 digit, 1 symbol.
+    """
+    # 1. Minimum Length Check (standard practice)
+    MIN_LENGTH = 8
+    if len(password) < MIN_LENGTH:
+        return False
+        
+    # 2. Character Class Checks (enforced by unit tests)
+    has_uppercase = any(c.isupper() for c in password)
+    has_lowercase = any(c.islower() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_symbol = any(not c.isalnum() for c in password)
+    
+    complexity_met = has_uppercase and has_lowercase and has_digit and has_symbol
+    
+    if not complexity_met:
+        return False
+
+    # 3. Zxcvbn Score Check (must be 3 or higher)
+    zxcvbn_score = zxcvbn(password)['score']
+    
+    return zxcvbn_score >= 3 # Now returns True only if BOTH complexity and score >= 3 are met
+
 
 def encrypt_data(data):
     """Encrypts a string using Fernet."""
@@ -121,8 +143,26 @@ def signup():
     if not check_password_strength(password): 
         # Re-run zxcvbn just to get the detailed feedback for the user
         analysis = zxcvbn(password)
+        # Check if the score or explicit rules failed and give feedback
         warning = analysis['feedback']['warning'] or "Password is not strong enough."
-        return jsonify({'message': warning + " Please use a stronger password (Score 3 or higher is required)."}), 400
+        
+        # Add specific complexity feedback if missing (e.g., if the zxcvbn feedback is vague)
+        feedback_messages = [warning]
+        if len(password) < 8:
+             feedback_messages.append("Must be at least 8 characters long.")
+        if not any(c.isupper() for c in password):
+            feedback_messages.append("Must include at least one uppercase letter.")
+        if not any(c.islower() for c in password):
+            feedback_messages.append("Must include at least one lowercase letter.")
+        if not any(c.isdigit() for c in password):
+            feedback_messages.append("Must include at least one number.")
+        if not any(not c.isalnum() for c in password):
+            feedback_messages.append("Must include at least one symbol/special character.")
+            
+        # Filter and combine unique messages
+        detailed_feedback = ". ".join(sorted(list(set(feedback_messages))))
+        
+        return jsonify({'message': f'Password failed strength check. {detailed_feedback}'}), 400
 
     # Check if user already exists
     if users_collection.find_one({'email': email}):
@@ -151,7 +191,7 @@ def login():
 
     user = users_collection.find_one({'email': email})
 
-    # Call check_password with the new (raw_password, hashed_password) order
+    # Call check_password with the (raw_password, hashed_password) order
     if user and check_password(password, user['password']): 
         # Set session variable on successful login
         session['user_id'] = str(user['_id'])
