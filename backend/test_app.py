@@ -193,6 +193,6 @@ def test_login_invalid_credentials(client):
 def test_login_non_existent_user(client):
     """Test login failure for a user that hasn't signed up."""
     response = login_test_user(client, email='nonexistent@example.com')
-    # FIX: Expect 401 Unauthorized
+    # FIX: Expect 401 Unauthorized.
     assert response.status_code == 401
     assert 'Invalid credentials.' in response.get_data(as_text=True)
