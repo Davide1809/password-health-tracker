@@ -97,16 +97,12 @@ def require_auth(f):
         if user_id is None:
             return jsonify({'message': 'Unauthorized'}), 401
         
-        # Check for user existence and update last_activity
+        # Check for user existence
         user = users_collection.find_one({'_id': user_id})
         if not user:
             # User ID in session but user not in DB (stale session)
             session.clear()
             return jsonify({'message': 'Unauthorized or session expired'}), 401
-
-        # NOTE: Session management/auto-logout logic is generally handled 
-        # via client-side activity monitoring and server-side session config.
-        # We rely on Flask session and cookie settings for this.
 
         return f(*args, **kwargs)
     return decorated_function
@@ -261,7 +257,7 @@ def get_passwords():
 def resource_not_found(e):
     return jsonify({'message': 'Resource not found'}), 404
 
-# --- Startup ---
+# --- Startup for Local Testing ---
 if __name__ == '__main__':
     if not all(os.environ.get(k) for k in ['SECRET_KEY', 'MONGO_URI']):
         print("WARNING: Running locally without required environment variables.")

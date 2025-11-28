@@ -5,22 +5,19 @@ import sys
 import base64
 import mongomock
 
-# --- CRITICAL FIX 1: Ensure 'backend' package is discoverable ---
-# Since we moved files to the root, we need to adjust how the main app is imported.
-# Assuming app.py is now at the root, it can be imported directly.
-
-# --- CRITICAL FIX 2: Correct Module Name ---
-import app as main_app 
+# --- CRITICAL FIX: Relative Import for app.py ---
+# Since test_app.py and app.py are now in the same 'backend' directory,
+# we use a relative import to correctly reference the main app module.
+from . import app as main_app 
 
 # =================================================================
-# FIX: Mocking Setup - Changed scope to 'function'
+# Mocking Setup 
 # =================================================================
 
 @pytest.fixture(scope='function')
 def mock_database_connection(monkeypatch):
     """
     Fixture to replace the real MongoDB connection with an in-memory mock.
-    Scope is set to function to allow the use of the 'monkeypatch' fixture.
     """
     # 1. Create a mock client and database
     mock_client = mongomock.MongoClient()
@@ -52,16 +49,11 @@ def client(mock_database_connection):
     os.environ['SECRET_KEY'] = test_secret
     
     # 4. Re-initialize the Fernet key object in the main app module after patching the environment
-    #    This is necessary to ensure the Fernet object uses the test_secret key for decryption in tests.
     try:
         main_app.app.config['SECRET_KEY'] = test_secret
-        
-        # Now that get_fernet_key is defined in main_app, we can call it here.
         main_app.ENCRYPTION_KEY = main_app.get_fernet_key(test_secret)
         main_app.fernet = main_app.Fernet(main_app.ENCRYPTION_KEY)
-        
     except Exception as e:
-        # This error handling is now safe and primarily for debugging.
         print(f"Error during test Fernet key re-initialization: {e}")
         
     
@@ -84,7 +76,7 @@ def register_test_user(client, email='test@example.com', password='Password123')
     )
 
 # =================================================================
-# Integration Tests (Requires Mock Database)
+# Tests
 # =================================================================
 
 def test_signup_successful(client):
@@ -116,7 +108,6 @@ def test_login_successful(client):
 
 def test_analyze_password_successful(client):
     """Test successful password analysis (mocked zxcvbn) without auth required."""
-    # This test should now pass because @require_auth was removed from /api/analyze in app.py
     response = client.post(
         '/api/analyze',
         data=json.dumps({'password': 'AStrongPassword123!'}),
