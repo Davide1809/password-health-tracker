@@ -13,6 +13,7 @@ from cryptography.fernet import Fernet
 from zxcvbn import zxcvbn 
 import base64
 from dotenv import load_dotenv
+from bson.objectid import ObjectId # Needed for delete route
 
 # Load environment variables from .env file (for local development)
 load_dotenv()
@@ -50,32 +51,52 @@ client = None
 db = None
 users_collection = None
 passwords_collection = None
+DB_CONNECTED = False
 
-try:
-    if not MONGO_URI and os.environ.get('TESTING') != 'True':
-        raise ValueError("MONGO_URI environment variable not set.")
-        
-    # Use real MongoDB client if URI is provided and not in test mode
-    if MONGO_URI:
+def initialize_db():
+    """Initializes the MongoDB connection based on MONGO_URI."""
+    global client, db, users_collection, passwords_collection, DB_CONNECTED
+    
+    if os.environ.get('TESTING') == 'True':
+        # Skip initialization if running in testing environment
+        print("DB Initialization skipped in TEST mode.")
+        return
+
+    if not MONGO_URI:
+        print("WARNING: MONGO_URI not set. Running without persistent database.")
+        DB_CONNECTED = False
+        return
+
+    try:
+        # Use a lightweight command to check the connection during initialization
         client = MongoClient(MONGO_URI)
+        client.admin.command('ismaster') 
         db = client.password_health_tracker
         users_collection = db.users
         passwords_collection = db.passwords 
+        DB_CONNECTED = True
         print("Successfully connected to MongoDB.")
         
-except Exception as e:
-    # If connection fails (e.g., local testing without MONGO_URI), use placeholder/mock
-    print(f"MongoDB connection failed: {e}. Running without database connection.")
-    # For local testing without a proper MONGO_URI, we skip full DB init here. 
-    # Mocking is handled by the test suite itself.
+    except Exception as e:
+        print(f"ERROR: MongoDB connection failed at initialization: {e}")
+        DB_CONNECTED = False
+
+# Initialize DB on startup
+initialize_db()
+
+# Function to ensure DB is connected before an operation
+def ensure_db_connection():
+    """Returns an error response if the database is not connected, otherwise None."""
+    if not DB_CONNECTED:
+        # For Cloud Run, this usually means an environment variable is missing or wrong.
+        return jsonify({'message': 'Database service unavailable.'}), 503
+    return None
 
 # --- Cryptography Setup (Fernet) ---
 
 def get_fernet_key(secret_key):
     """Generates a Fernet key from the Flask secret key."""
-    # Hash the secret key and use the first 32 bytes (44 base64 chars)
     # The key MUST be 32 URL-safe base64-encoded bytes.
-    # The simplest way is to hash the application's SECRET_KEY.
     key_bytes = secret_key.encode('utf-8')
     key_hash = base64.urlsafe_b64encode(key_bytes).decode('utf-8')[:44]
     return key_hash.encode('utf-8')
@@ -85,8 +106,7 @@ try:
     fernet = Fernet(ENCRYPTION_KEY)
 except Exception as e:
     print(f"Error initializing Fernet: {e}")
-    # Initialize Fernet with a dummy key so the module can load, but it will fail 
-    # if encryption/decryption is attempted with this key outside of a valid environment.
+    # Initialize Fernet with a dummy key for safety
     fernet = Fernet(Fernet.generate_key()) 
 
 def encrypt_data(data):
@@ -110,15 +130,22 @@ def require_auth(f):
     """Decorator to ensure user is logged in before accessing a route."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # 1. Check DB Status
+        db_check = ensure_db_connection()
+        if db_check:
+            return db_check
+
+        # 2. Check Session
         user_id = session.get('user_id')
         if user_id is None:
             return jsonify({'message': 'Unauthorized. Please log in.'}), 401
         
-        # Check if the user exists in the database
+        # 3. Check User Existence
         user = users_collection.find_one({'_id': user_id})
         if not user:
              # Clear session if user not found (e.g., user deleted)
             session.pop('user_id', None)
+            session.modified = True # Ensure session is saved/updated immediately
             return jsonify({'message': 'Unauthorized. User not found.'}), 401
 
         return f(*args, **kwargs)
@@ -133,11 +160,23 @@ def status():
     user_email = None
     user_name = None
     
+    # Check if we need to query the database
     if user_id:
-        user = users_collection.find_one({'_id': user_id})
-        if user:
-            user_email = user['email']
-            user_name = user.get('name', user['email'].split('@')[0])
+        db_check = ensure_db_connection()
+        if db_check:
+            # If DB is down but session exists, treat as logged in but warn on email
+            user_email = "Database Unavailable"
+            user_name = "DB Error"
+        else:
+            user = users_collection.find_one({'_id': user_id})
+            if user:
+                user_email = user['email']
+                user_name = user.get('name', user['email'].split('@')[0])
+            else:
+                 # If user_id is in session but user not in DB, clear session
+                session.pop('user_id', None)
+                session.modified = True
+                user_id = None # Set to None to reflect unauthenticated state
             
     return jsonify({
         'isAuthenticated': user_id is not None,
@@ -148,6 +187,10 @@ def status():
 @app.route('/api/signup', methods=['POST'])
 def signup():
     """Handle new user registration."""
+    db_check = ensure_db_connection()
+    if db_check:
+        return db_check
+        
     data = request.get_json()
     email = data.get('email').lower().strip()
     password = data.get('password')
@@ -168,10 +211,16 @@ def signup():
         'created_at': datetime.utcnow()
     }
 
-    users_collection.insert_one(user_data)
+    try:
+        users_collection.insert_one(user_data)
+    except Exception as e:
+        print(f"DB Insert Error: {e}")
+        return jsonify({'message': 'Failed to create user due to database error.'}), 500
+
     
     # Immediately log in the user upon successful signup
     session['user_id'] = user_data['_id']
+    session.modified = True # <<< CRITICAL FIX: Ensure the session is marked for saving
     
     # Create a response object to set the cookie
     response = make_response(jsonify({'message': 'User created and logged in.'}), 201)
@@ -180,6 +229,10 @@ def signup():
 @app.route('/api/login', methods=['POST'])
 def login():
     """Handle user login."""
+    db_check = ensure_db_connection()
+    if db_check:
+        return db_check
+
     data = request.get_json()
     email = data.get('email').lower().strip()
     password = data.get('password')
@@ -192,6 +245,7 @@ def login():
     if user and check_password_hash(user['password'], password):
         # Set session cookie
         session['user_id'] = user['_id']
+        session.modified = True # <<< CRITICAL FIX: Ensure the session is marked for saving
         
         # Create a response object to set the cookie
         response = make_response(jsonify({'message': 'Login successful'}), 200)
@@ -203,6 +257,7 @@ def login():
 def logout():
     """Handle user logout and session clearance."""
     session.pop('user_id', None)
+    session.modified = True
     return jsonify({'message': 'Logged out successfully'}), 200
 
 # --- Password Analysis Route ---
@@ -210,6 +265,7 @@ def logout():
 @app.route('/api/analyze', methods=['POST'])
 def analyze_password():
     """Analyze a password using zxcvbn."""
+    # Does not require DB connection or auth
     data = request.get_json()
     password = data.get('password', '')
     
@@ -229,6 +285,7 @@ def analyze_password():
 @require_auth
 def store_password():
     """Store an encrypted password for the logged-in user."""
+    # DB connection is checked in @require_auth
     data = request.get_json()
     user_id = session.get('user_id')
     site_name = data.get('site_name')
@@ -249,7 +306,12 @@ def store_password():
         'created_at': datetime.utcnow()
     }
 
-    passwords_collection.insert_one(password_entry)
+    try:
+        passwords_collection.insert_one(password_entry)
+    except Exception as e:
+        print(f"DB Insert Error: {e}")
+        return jsonify({'message': 'Failed to store password due to database error.'}), 500
+
 
     return jsonify({'message': 'Password stored securely.'}), 201
 
@@ -258,10 +320,15 @@ def store_password():
 @require_auth
 def get_passwords():
     """Retrieve and decrypt all passwords for the logged-in user."""
+    # DB connection is checked in @require_auth
     user_id = session.get('user_id')
     
-    # Fetch passwords sorted by creation date (newest first)
-    cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
+    try:
+        # Fetch passwords sorted by creation date (newest first)
+        cursor = passwords_collection.find({'user_id': user_id}).sort('created_at', -1)
+    except Exception as e:
+        print(f"DB Find Error: {e}")
+        return jsonify({'message': 'Failed to retrieve passwords due to database error.'}), 500
     
     passwords_list = []
     for doc in cursor:
@@ -282,10 +349,14 @@ def get_passwords():
 @require_auth
 def delete_password(id):
     """Delete a password by its MongoDB ObjectID string ID."""
-    from bson.objectid import ObjectId
+    # DB connection is checked in @require_auth
     user_id = session.get('user_id')
 
     try:
+        # Check if the string ID can be converted to ObjectId
+        if not ObjectId.is_valid(id):
+            return jsonify({'message': 'Invalid password ID format'}), 400
+            
         # Use ObjectId to correctly query MongoDB
         result = passwords_collection.delete_one({
             '_id': ObjectId(id),
@@ -299,7 +370,7 @@ def delete_password(id):
 
     except Exception as e:
         print(f"Error deleting password: {e}")
-        return jsonify({'message': 'Invalid password ID format'}), 400
+        return jsonify({'message': 'A database error occurred during deletion.'}), 500
 
 # --- Error Handling ---
 
