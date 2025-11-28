@@ -7,15 +7,8 @@ from functools import wraps
 
 from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
-# Import standard MongoClient and the mock client
-from pymongo import MongoClient
-# We conditionally import mongomock to avoid errors if it's not installed,
-# but since it is in requirements.txt, this is safe for Cloud Build.
-try:
-    from mongomock import MongoClient as MockMongoClient
-except ImportError:
-    MockMongoClient = None
-
+# We rely on Pytest/monkeypatching to replace this import during testing
+from pymongo import MongoClient 
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.fernet import Fernet
 from zxcvbn import zxcvbn 
@@ -46,62 +39,58 @@ CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
 # --- Database Setup (MongoDB) ---
 
-# CRITICAL FIX: Use MockMongoClient during testing
-if app.config.get('TESTING') and MockMongoClient:
-    print("Using MockMongoClient for testing.")
-    client = MockMongoClient()
-else:
-    print("Using standard MongoClient.")
-    client = MongoClient(MONGO_URI)
+# CRITICAL FIX: The app now always imports MongoClient. 
+# The test file (test_app.py) will use monkeypatch to replace MongoClient 
+# with MockMongoClient before tests start, preventing live connection attempts during build.
+client = MongoClient(MONGO_URI)
 
 db = client.password_health_tracker
 users_collection = db.users
 passwords_collection = db.passwords 
 
-# Ensure indices are created only if we are using a real MongoDB client
+# Ensure indices are created only if we are using a real MongoDB client and not testing
 if not app.config.get('TESTING'):
     try:
         users_collection.create_index('email', unique=True)
         passwords_collection.create_index('user_id')
-        # Test connection
         client.admin.command('ping')
         print("Successfully connected to MongoDB.")
     except ConnectionFailure as e:
         print(f"ERROR: Could not connect to MongoDB: {e}")
-        # In a real environment, you might want to raise here, but we'll let it proceed for now.
+    except Exception as e:
+        # Handle cases where the mock client might not have admin.command
+        pass
+
 
 # --- Encryption Setup ---
 
 FERNET_KEY_BASE64 = os.environ.get('FERNET_KEY')
-# Ensure FERNET_KEY exists and is 32 URL-safe base64 bytes
-if FERNET_KEY_BASE64 and len(base64.urlsafe_b64decode(FERNET_KEY_BASE64)) == 32:
+
+if FERNET_KEY_BASE64:
     fernet = Fernet(FERNET_KEY_BASE64)
 else:
-    # Use a fixed, deterministic key for the mock environment
-    if app.config.get('TESTING'):
-        # For testing, we need a stable key for consistent encryption/decryption
-        # This is a valid 32-byte URL-safe base64 string
-        fixed_test_key = 'WjVUNjF0cThxV0h2Skt1NnB6SGV0ZGFyVjZ2ZkFhVks='
-        fernet = Fernet(fixed_test_key)
-    else:
-        print("WARNING: FERNET_KEY is missing or invalid. Using a placeholder key.")
-        temp_key = Fernet.generate_key()
-        fernet = Fernet(temp_key)
+    # Use a fixed, deterministic key for the mock/testing environment
+    fixed_test_key = 'WjVUNjF0cThxV0h2Skt1NnB6SGV0ZGFyVjZ2ZkFhVks='
+    fernet = Fernet(fixed_test_key)
+    print("WARNING: FERNET_KEY is missing. Using a placeholder key.")
 
 
 def encrypt_data(data):
     """Encrypts a string using Fernet."""
     if not isinstance(data, str):
         data = str(data)
-    # The token is already bytes, no need to re-encode
     return fernet.encrypt(data.encode('utf-8'))
 
 def decrypt_data(token):
     """Decrypts a Fernet token."""
-    # The token argument passed to decrypt is expected to be bytes
+    # Ensure token is bytes
     if isinstance(token, str):
         token = token.encode('utf-8')
-    return fernet.decrypt(token).decode('utf-8')
+    try:
+        return fernet.decrypt(token).decode('utf-8')
+    except Exception as e:
+        print(f"Decryption failed: {e}")
+        return "[Decryption Error]"
 
 
 # --- Authentication Decorator ---
@@ -109,7 +98,6 @@ def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
-            # Check if user_id is in the session (standard Flask session handling)
             return jsonify({'message': 'Unauthorized access: Session required.'}), 401
         
         return f(*args, **kwargs)
@@ -210,7 +198,7 @@ def save_password():
     if not all([site_name, username, password]):
         return jsonify({'message': 'Missing site name, username, or password.'}), 400
 
-    # Ensure the encrypted data is stored as bytes or a decodable string representation
+    # Ensure the encrypted data is stored as a decodable string representation
     encrypted_password_bytes = encrypt_data(password)
     
     password_entry = {
@@ -236,14 +224,7 @@ def get_passwords():
     
     passwords_list = []
     for doc in cursor:
-        try:
-            # We stored it as a string, so we need to encode it back to bytes for Fernet
-            encrypted_token_bytes = doc['encrypted_password'].encode('utf-8')
-            decrypted_password = decrypt_data(encrypted_token_bytes)
-        except Exception as e:
-            print(f"Decryption error for document {doc.get('_id')}: {e}")
-            decrypted_password = "[Error: Could not decrypt]"
-
+        decrypted_password = decrypt_data(doc['encrypted_password'])
         
         passwords_list.append({
             'id': str(doc['_id']), 

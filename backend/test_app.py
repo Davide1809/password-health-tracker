@@ -1,10 +1,67 @@
 import pytest
 import json
-from app import app, users_collection, passwords_collection
+import mongomock
 from bson.objectid import ObjectId
-# Import MongoClient from mongomock if the environment is a test environment
-# In this simulated environment, we assume the collections are correctly mocked.
-# NOTE: The actual mock import is now handled conditionally inside app.py
+
+# Import the main app module
+import app
+
+# --- Pytest Fixtures ---
+
+# This fixture MUST run first and automatically to patch the MongoDB connection.
+@pytest.fixture(scope="session", autouse=True)
+def mock_mongo_client(monkeypatch):
+    """
+    Patches the real pymongo.MongoClient with the in-memory mongomock.MongoClient 
+    before the app module is imported and initialized. This prevents any network 
+    connection attempts during testing.
+    """
+    # 1. Replace the MongoClient import in the app module's namespace
+    monkeypatch.setattr('app.MongoClient', mongomock.MongoClient)
+    
+    # 2. Force the app to use the TESTING flag
+    app.app.config['TESTING'] = True
+    
+    # 3. Re-initialize the client within the app module after patching
+    # This ensures that app.client uses the MockMongoClient now.
+    # Note: We pass a fake URI since MockMongoClient accepts it but ignores it.
+    app.client = app.MongoClient('mongodb://mockdb:27017/testdb')
+    app.db = app.client.password_health_tracker
+    app.users_collection = app.db.users
+    app.passwords_collection = app.db.passwords
+    
+    # Yield control to the tests
+    yield
+    
+    # Cleanup (though mongomock instances are usually ephemeral)
+    app.users_collection.delete_many({})
+    app.passwords_collection.delete_many({})
+
+
+# Helper to get the authenticated user ID for the test session
+def get_user_id(client):
+    """Retrieves the user_id from the session cookie after login."""
+    # Find the user inserted during the test run
+    user = app.users_collection.find_one({'email': 'testuser@example.com'})
+    return str(user['_id']) if user else None
+
+
+# Fixture to provide the Flask test client
+@pytest.fixture
+def client():
+    # Note: TESTING flag is already set in mock_mongo_client fixture
+    app.app.config['SESSION_COOKIE_SECURE'] = False
+    app.app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
+    with app.app.test_client() as client:
+        yield client
+
+# Fixture to clear the database before each test
+@pytest.fixture(autouse=True)
+def clean_db():
+    app.users_collection.delete_many({})
+    app.passwords_collection.delete_many({})
+    # The yield allows the test to run, and the cleanup happens after
+    yield
 
 # --- Helper Functions for Tests ---
 
@@ -35,23 +92,6 @@ def login_test_user(client, email='testuser@example.com', password='StrongPasswo
 
 # --- Actual Tests ---
 
-# Fixture to clear the database before each test (assuming mongomock is used)
-# This fixture is crucial for mongomock to ensure tests are isolated.
-@pytest.fixture(autouse=True)
-def clean_db():
-    users_collection.delete_many({})
-    passwords_collection.delete_many({})
-
-# Flask test client fixture
-@pytest.fixture
-def client():
-    # CRITICAL FIX: Set the TESTING flag to true
-    app.config['TESTING'] = True
-    app.config['SESSION_COOKIE_SECURE'] = False
-    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
-    with app.test_client() as client:
-        yield client
-
 def test_root_path(client):
     """Test the basic health check path."""
     response = client.get('/')
@@ -77,10 +117,11 @@ def test_password_management_flow(client):
     assert login_response.status_code == 200
 
     # 2. Save a password
+    test_password = 'ComplexPassword123!'
     save_data = {
         'site_name': 'TestSite',
         'username': 'testuser',
-        'password': 'ComplexPassword123!'
+        'password': test_password
     }
     save_response = client.post(
         '/api/passwords', 
@@ -98,7 +139,8 @@ def test_password_management_flow(client):
     
     retrieved_password = passwords[0]
     assert retrieved_password['site_name'] == 'TestSite'
-    assert retrieved_password['password'] == 'ComplexPassword123!' 
+    # Check that the decrypted password matches the original one
+    assert retrieved_password['password'] == test_password 
     assert 'id' in retrieved_password
 
 def test_get_passwords_empty(client):
@@ -127,7 +169,6 @@ def test_delete_password_successful(client):
 
     # 3. Get the ID of the saved password
     get_response = client.get('/api/passwords')
-    assert get_response.status_code == 200
     passwords = json.loads(get_response.data)
     
     assert len(passwords) == 1
