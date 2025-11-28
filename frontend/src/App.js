@@ -4,6 +4,10 @@ import { LogIn, UserPlus, XCircle, CheckCircle, Eye, EyeOff, Clipboard, PlusCirc
 // === CRITICAL: LIVE CLOUD RUN SERVICE URL ===
 const API_BASE_URL = 'https://password-backend-749522457256.us-central1.run.app'; 
 
+// --- SESSION CONFIGURATION ---
+const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes of inactivity
+// The /api/logout endpoint will be hit by the browser's 'unload' event.
+
 // Object defining password security requirements and their regex patterns
 const passwordRequirements = [
   { key: 'length', text: 'At least 8 characters', regex: /.{8,}/ },
@@ -861,6 +865,77 @@ const App = () => {
   const [mode, setMode] = useState(isAuthenticated ? 'dashboard' : 'login');
   const [userEmail, setUserEmail] = useState(localStorage.getItem('userEmail') || '');
   const [userName, setUserName] = useState(localStorage.getItem('userName') || '');
+  
+  // Ref to hold the inactivity timer
+  const [inactivityTimer, setInactivityTimer] = useState(null);
+
+  // --- SESSION MANAGEMENT LOGIC ---
+
+  // Shared function to clear client-side state
+  const clearClientState = useCallback(() => {
+    localStorage.removeItem('userEmail');
+    localStorage.removeItem('userName'); 
+    setUserEmail('');
+    setUserName('');
+    setIsAuthenticated(false);
+    setMode('login');
+  }, []);
+
+  /**
+   * Passive logout using navigator.sendBeacon when the user closes the tab.
+   * This is designed to fire quickly and reliably during the 'unload' event.
+   */
+  const passiveLogout = useCallback(() => {
+    // Only send beacon if the user is currently authenticated in the client state
+    if (localStorage.getItem('userEmail')) {
+        const data = new FormData();
+        data.append('reason', 'window_closed');
+        
+        // Use an empty JSON object as a Blob
+        const blob = new Blob([JSON.stringify({ reason: 'window_closed' })], { type: 'application/json' });
+
+        if (navigator.sendBeacon) {
+             navigator.sendBeacon(`${API_BASE_URL}/api/logout`, blob);
+        } else {
+             // Fallback warning for older browsers
+             console.warn("navigator.sendBeacon not available. Session may not be cleaned up immediately.");
+        }
+    }
+    // Note: We don't clear client state here, as this function fires too late 
+    // to update React state, and the server will handle the session clear.
+  }, []);
+  
+  // Handle Logout (Manual or Inactivity)
+  const handleLogout = useCallback(async () => {
+    // 1. Clear frontend state immediately
+    clearClientState();
+
+    // 2. Clear backend session cookie
+    try {
+      // Use standard fetch (not passive)
+      await authFetch(`${API_BASE_URL}/api/logout`, { method: 'POST' });
+      console.log('User manually logged out. Backend session cleared.');
+    } catch (error) {
+      console.error('Error during backend logout:', error);
+    }
+  }, [clearClientState]);
+  
+  // Resets the inactivity timer
+  const resetInactivityTimer = useCallback(() => {
+    // Clear the existing timer
+    if (inactivityTimer) {
+      clearTimeout(inactivityTimer);
+    }
+
+    // Set a new timer
+    const timer = setTimeout(() => {
+      console.log("Inactivity timeout reached. Triggering auto-logout.");
+      handleLogout(); // Use standard logout logic
+    }, INACTIVITY_TIMEOUT_MS);
+    
+    setInactivityTimer(timer);
+  }, [inactivityTimer, handleLogout]);
+
 
   // Handle successful Login or Signup
   const handleAuthSuccess = useCallback((email, name, action) => {
@@ -869,25 +944,53 @@ const App = () => {
     setUserName(name); 
     setIsAuthenticated(true);
     setMode('dashboard'); 
-  }, []);
+    
+    // Start or reset the inactivity timer on successful login
+    resetInactivityTimer();
+  }, [resetInactivityTimer]);
 
-  // Handle Logout
-  const handleLogout = useCallback(async () => {
-    // Clear frontend state
-    localStorage.removeItem('userEmail');
-    localStorage.removeItem('userName'); 
-    setUserEmail('');
-    setUserName('');
-    setIsAuthenticated(false);
-    setMode('login');
 
-    // Tell backend to clear its session cookie
-    try {
-      await authFetch(`${API_BASE_URL}/api/logout`, { method: 'POST' });
-    } catch (error) {
-      console.error('Error during backend logout:', error);
+  // --- EFFECT: Session Listener Setup (Runs only when authenticated) ---
+  useEffect(() => {
+    // Only attach listeners if the user is logged in
+    if (isAuthenticated) {
+      // 1. Inactivity Listeners
+      const interactionEvents = ['mousemove', 'mousedown', 'keypress', 'scroll', 'touchstart'];
+      interactionEvents.forEach(eventType => {
+        window.addEventListener(eventType, resetInactivityTimer, true);
+      });
+      
+      // Initial timer start (if not already running)
+      resetInactivityTimer();
+
+      // 2. Passive Logout Listener (for tab/window close)
+      window.addEventListener('unload', passiveLogout);
+
+      // Cleanup function: remove listeners when the component unmounts or auth state changes
+      return () => {
+        // Clear timeout
+        if (inactivityTimer) {
+          clearTimeout(inactivityTimer);
+        }
+        
+        // Remove interaction listeners
+        interactionEvents.forEach(eventType => {
+          window.removeEventListener(eventType, resetInactivityTimer, true);
+        });
+        
+        // Remove unload listener
+        window.removeEventListener('unload', passiveLogout);
+      };
+    } else {
+        // Clear any lingering timer if the user logs out
+        if (inactivityTimer) {
+            clearTimeout(inactivityTimer);
+            setInactivityTimer(null);
+        }
     }
-  }, []);
+  }, [isAuthenticated, resetInactivityTimer, passiveLogout, inactivityTimer]);
+  // The isAuthenticated dependency manages starting/stopping the listeners.
+  // The other dependencies ensure the callbacks are correctly managed.
 
 
   // Rendering based on mode

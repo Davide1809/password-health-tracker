@@ -25,7 +25,9 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='None',
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=24) # Session lasts 24 hours
+    # REMOVED: PERMANENT_SESSION_LIFETIME=timedelta(hours=24) 
+    # By removing this, the session cookie becomes a browser-session cookie,
+    # meaning it expires when the browser is closed.
 )
 
 # Allow CORS only from the frontend URL, and allow credentials (cookies)
@@ -55,16 +57,14 @@ except Exception as e:
     print(f"Error initializing Fernet encryption: {e}")
     fernet = None
 
-# --- Utility Functions (Updated check_password_strength to enforce complexity) ---
+# --- Utility Functions ---
 
 def hash_password(password):
     """Hashes the password using Werkzeug's secure method."""
     return generate_password_hash(password)
 
 def check_password(raw_password, hashed_password):
-    """Checks a raw password against a hashed one.
-       Uses (raw, hashed) signature to match unit tests.
-       Internal call uses Werkzeug's required (hashed, raw) order."""
+    """Checks a raw password against a hashed one."""
     return check_password_hash(hashed_password, raw_password)
 
 def check_email_format(email):
@@ -78,13 +78,10 @@ def check_password_strength(password):
     Returns True if score >= 3 AND all complexity rules are met, False otherwise.
     Complexity Rules: Min 8 chars, 1 uppercase, 1 lowercase, 1 digit, 1 symbol.
     """
-    # 1. Minimum Length Check
     MIN_LENGTH = 8
     if len(password) < MIN_LENGTH:
-        # Fails test_password_strength_too_short
         return False
         
-    # 2. Character Class Checks (enforced by unit tests)
     has_uppercase = any(c.isupper() for c in password)
     has_lowercase = any(c.islower() for c in password)
     has_digit = any(c.isdigit() for c in password)
@@ -93,13 +90,10 @@ def check_password_strength(password):
     complexity_met = has_uppercase and has_lowercase and has_digit and has_symbol
     
     if not complexity_met:
-        # Fails: no uppercase, no number, or no symbol tests
         return False
 
-    # 3. Zxcvbn Score Check (must be 3 or higher)
     zxcvbn_score = zxcvbn(password)['score']
     
-    # Passes test_password_strength_valid (must be >= 3 and complexity met)
     return zxcvbn_score >= 3
 
 
@@ -143,15 +137,11 @@ def signup():
     if not check_email_format(email):
         return jsonify({'message': 'Invalid email format'}), 400
 
-    # Using the fixed boolean check_password_strength
     if not check_password_strength(password): 
-        # Re-run zxcvbn and check complexity rules for detailed feedback
         analysis = zxcvbn(password)
         
-        # Build detailed feedback messages
         feedback_messages = [analysis['feedback']['warning'] or "Password is not strong enough."]
         
-        # Specific complexity rule failure checks
         if len(password) < 8:
              feedback_messages.append("Must be at least 8 characters long.")
         if not any(c.isupper() for c in password):
@@ -163,28 +153,26 @@ def signup():
         if not any(not c.isalnum() for c in password):
             feedback_messages.append("Must include at least one symbol/special character.")
             
-        # Filter and combine unique messages
         detailed_feedback = ". ".join(sorted(list(set(feedback_messages))))
         
         return jsonify({'message': f'Password failed strength check. {detailed_feedback}'}), 400
 
-    # Check if user already exists
     if users_collection.find_one({'email': email}):
         return jsonify({'message': 'Email already in use'}), 409
 
-    # Hash the password
     hashed_password = hash_password(password)
 
-    # Insert new user into MongoDB
-    users_collection.insert_one({
+    user_info = users_collection.insert_one({
         'email': email,
         'password': hashed_password,
         'created_at': datetime.utcnow()
     })
 
-    # Auto-login after signup
-    session['user_id'] = str(users_collection.find_one({'email': email})['_id'])
+    # Ensure session is non-permanent (will rely on the browser session)
+    session.permanent = False 
+    session['user_id'] = str(user_info.inserted_id)
     session['email'] = email
+    
     return jsonify({'message': 'User created and logged in successfully', 'email': email}), 201
 
 @app.route('/api/login', methods=['POST'])
@@ -195,9 +183,9 @@ def login():
 
     user = users_collection.find_one({'email': email})
 
-    # Call check_password with the (raw_password, hashed_password) order
     if user and check_password(password, user['password']): 
-        # Set session variable on successful login
+        # Set session to non-permanent
+        session.permanent = False 
         session['user_id'] = str(user['_id'])
         session['email'] = user['email']
         return jsonify({'message': 'Logged in successfully', 'email': user['email']}), 200
