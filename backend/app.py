@@ -1,5 +1,4 @@
 import os
-import secrets
 import json
 import re
 from datetime import datetime, timedelta
@@ -14,7 +13,11 @@ from cryptography.fernet import Fernet
 from zxcvbn import zxcvbn 
 import base64
 
-# --- Configuration and Initialization ---\napp = Flask(__name__)\n\n# Load environment variables (set during gcloud deploy)
+# --- Configuration and Initialization ---
+# The application object MUST be defined before any configuration is applied.
+app = Flask(__name__)
+
+# Load environment variables (set during gcloud deploy)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 MONGO_URI = os.environ.get('MONGO_URI')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
@@ -31,6 +34,7 @@ CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
 # --- Database Setup (MongoDB) ---
 try:
+    # MONGO_URI is defined above using os.environ.get
     client = MongoClient(MONGO_URI)
     db = client.password_health_tracker
     users_collection = db.users
@@ -47,13 +51,14 @@ except Exception as e:
 # --- Encryption Setup ---
 # Derive encryption key from SECRET_KEY for Fernet. 
 # It must be 32 URL-safe base64-encoded bytes.
-# We'll use a SHA256 hash of the SECRET_KEY, then base64 encode it.
 def get_fernet_key(secret_key):
     import hashlib
     key_hash = hashlib.sha256(secret_key.encode()).digest()
     return base64.urlsafe_b64encode(key_hash[:32])
 
 # Initialize Fernet instance
+FERNET_KEY = None
+fernet = None
 if app.config['SECRET_KEY']:
     FERNET_KEY = get_fernet_key(app.config['SECRET_KEY'])
     fernet = Fernet(FERNET_KEY)
@@ -172,25 +177,12 @@ def login():
 def logout():
     """
     Clears the session on the backend. This is essential for security.
-    Flask's session.clear() deletes the data, but the browser still holds the cookie.
-    We need to return a response that tells the browser to destroy the session cookie.
     """
     if 'user_id' in session:
         session.clear()
         
     # Create a response object
     response = make_response(jsonify({'message': 'Logout successful. Session cleared.'}), 200)
-    
-    # Instruct the browser to clear the session cookie by setting it to expire immediately.
-    # We must use the same settings (Secure, SameSite) as when it was created.
-    # Flask session cookies are named 'session' by default.
-    # Note: Flask's session.clear() generally handles cookie deletion on the response, 
-    # but explicitly creating the response ensures we can be certain.
-    
-    # Since we rely on the default Flask session cookie mechanism:
-    # 1. session.clear() removes the session data from the server-side store (if any).
-    # 2. Flask marks the session cookie for deletion in the response header.
-    # We just ensure the response is correctly returned.
     
     return response
 
@@ -281,10 +273,19 @@ if __name__ == '__main__':
     if not all(os.environ.get(k) for k in ['SECRET_KEY', 'MONGO_URI']):
         print("WARNING: Running locally without required environment variables.")
         app.config['SECRET_KEY'] = 'default_secret_key_for_local_dev_12345678'
-        if 'FERNET_KEY' not in globals():
-             FERNET_KEY = get_fernet_key(app.config['SECRET_KEY'])
-             fernet = Fernet(FERNET_KEY)
     
+    # Re-check and set up Fernet key for local run if it wasn't set earlier due to missing env var
+    # The 'fernet' object is being modified in the global scope here.
+    if FERNET_KEY is None:
+        # We now use the secret key set above in the app config
+        new_fernet_key = get_fernet_key(app.config['SECRET_KEY'])
+        
+        # Modify the module-level variables directly
+        FERNET_KEY = new_fernet_key
+        fernet = Fernet(FERNET_KEY) # <--- This assignment is sufficient.
+        print("Fernet key initialized for local execution.")
+
+
     # For local development with a local MongoDB instance
     if not os.environ.get('MONGO_URI'):
         MONGO_URI = 'mongodb://localhost:27017/'
