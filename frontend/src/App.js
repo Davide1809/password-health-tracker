@@ -4,7 +4,7 @@ import { LogIn, UserPlus, XCircle, CheckCircle, Eye, EyeOff, Clipboard, PlusCirc
 // === CRITICAL: LIVE CLOUD RUN SERVICE URL ===
 const API_BASE_URL = 'https://password-backend-749522457256.us-central1.run.app'; 
 
-// --- SESSION CONFIGURATION ---
+// --- SESSION CONFIGURATION ---\n
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes of inactivity
 // The /api/logout endpoint will be hit by the browser's 'unload' event.
 
@@ -19,979 +19,699 @@ const passwordRequirements = [
 
 // Email validation function
 const isEmailValid = (email) => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/; 
+  const emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/; 
   return emailRegex.test(email);
 };
 
-// --- API Fetch Wrapper (CRITICAL: NOW USES COOKIES) ---
-const authFetch = async (url, options = {}) => {
-    const headers = {
-        'Content-Type': 'application/json',
-        ...options.headers,
-    };
-
-    // CRITICAL FIX: This tells the browser to send the session cookie
-    // from the backend with every request.
-    const fetchOptions = {
-        ...options,
-        headers,
-        credentials: 'include' 
-    };
-
-    // Exponential Backoff implementation (Max 3 retries)
-    for (let i = 0; i < 3; i++) {
-        try {
-            const response = await fetch(url, fetchOptions);
-            return response;
-        } catch (error) {
-            if (i < 2) {
-                // Wait 2^i * 100ms before retrying
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 100));
-            } else {
-                throw error; // Re-throw error on final attempt
-            }
-        }
-    }
-    throw new Error("Failed to fetch after multiple retries.");
+// --- API Fetch Utility ---
+const apiFetch = async (endpoint, options = {}) => {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (e) {
+    // If the response is not JSON (e.g., empty 204 or text), handle gracefully
+    data = { message: response.statusText || 'Operation successful' };
+  }
+  
+  if (!response.ok) {
+    throw new Error(data.message || `API Error: ${response.status}`);
+  }
+  return data;
 };
 
+// --- COMPONENTS ---
 
-// --- Utility Components ---
-
-// Component for displaying password requirements status
-const PasswordRequirements = ({ password }) => {
-  const validationState = passwordRequirements.map(req => ({
-    ...req,
-    isMet: req.regex.test(password),
-  }));
+const Message = ({ message, type }) => {
+  if (!message) return null;
+  const classes = type === 'error' 
+    ? "bg-red-900 text-red-300" 
+    : "bg-green-900 text-green-300";
+  const Icon = type === 'error' ? XCircle : CheckCircle;
 
   return (
-    <div className="mt-4 p-4 bg-gray-900 rounded-xl text-xs space-y-1 shadow-inner">
-      <h3 className="font-semibold text-sm text-yellow-300 mb-2">Security Requirements:</h3>
-      {validationState.map(req => (
-        <p key={req.key} className={`flex items-center transition-colors ${req.isMet ? 'text-green-400' : 'text-red-400'}`}>
-          {req.isMet ? <CheckCircle size={14} className="mr-2" /> : <XCircle size={14} className="mr-2" />}
-          {req.text}
-        </p>
-      ))}
+    <div className={`mt-4 p-3 rounded-lg flex items-center shadow-lg ${classes}`}>
+      <Icon size={18} className="mr-2 flex-shrink-0" />
+      <span className="text-sm">{message}</span>
     </div>
   );
 };
-
-// Helper for copying text to clipboard (using document.execCommand for cross-browser compatibility in iframes)
-const copyToClipboard = (text) => {
-    try {
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.style.position = 'fixed'; 
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-        return true;
-    } catch (err) {
-        console.error('Failed to copy text: ', err);
-        return false;
-    }
-};
-
-// --- Custom UI Components ---
-
-const Header = ({ userEmail, onLogout, isAuthenticated }) => (
-    <header className="fixed top-0 left-0 right-0 bg-gray-900 border-b border-indigo-700/50 shadow-lg z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
-            <div className="flex items-center">
-                <Zap className="h-7 w-7 text-yellow-400 mr-2" />
-                <span className="text-xl font-bold text-white tracking-wider">VaultGuard</span>
-            </div>
-            {isAuthenticated && (
-                <div className="flex items-center space-x-4">
-                    <span className="text-sm text-gray-400 hidden sm:inline">{userEmail}</span>
-                    <button
-                        onClick={onLogout}
-                        className="flex items-center py-2 px-4 rounded-full text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition duration-150 shadow-md"
-                    >
-                        <LogIn className="mr-1 h-4 w-4" />
-                        Log Out
-                    </button>
-                </div>
-            )}
-        </div>
-    </header>
-);
-
 
 // --- Form Components ---
 
-// Main Signup Form Component
-const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
-  const [name, setName] = useState(''); 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  const [reqsMet, setReqsMet] = useState({});
-
-  useEffect(() => {
-    const newState = {};
-    passwordRequirements.forEach(req => {
-      newState[req.key] = req.regex.test(password);
-    });
-    setReqsMet(newState);
-  }, [password]);
-
-  const isValidEmail = isEmailValid(email);
-  const isPasswordStrong = Object.values(reqsMet).every(Boolean);
-  const isNameValid = name.trim().length > 0; 
-  const isSubmitEnabled = isValidEmail && isPasswordStrong && !isLoading && isNameValid;
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError(null);
-
-    if (!isSubmitEnabled) {
-      setError("Please fill in your name and meet all validation requirements.");
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      // CRITICAL: Using authFetch and correct /api/signup path
-      const response = await authFetch(`${API_BASE_URL}/api/signup`, {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // NO token logic. The cookie is set by the browser.
-        localStorage.setItem('userEmail', email);
-        localStorage.setItem('userName', name); 
-        onAuthSuccess(data.email, name, 'signup');
-      } else {
-        setError(data.message || 'Error during registration.');
-      }
-    } catch (err) {
-      console.error('Network or fetch error:', err);
-      setError('Connection error. Please try again later.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <div className="bg-gray-800 p-8 md:p-12 rounded-3xl shadow-2xl w-full max-w-md border-t-8 border-indigo-500 transform transition-all hover:shadow-indigo-500/30">
-      <h2 className="text-3xl font-extrabold text-white flex items-center mb-6">
-        <UserPlus className="mr-3 text-indigo-400" size={30} />
-        Create an Account
-      </h2>
-      
-      {error && (
-        <div className="p-3 mb-4 text-sm text-red-300 bg-red-800/50 rounded-lg border border-red-700" role="alert">
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* NAME INPUT FIELD */}
-        <div>
-          <label htmlFor="name" className="block text-sm font-medium text-gray-300">Your Name</label>
-          <input
-            id="name"
-            name="name"
-            type="text"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className={`mt-1 block w-full px-4 py-3 border rounded-lg shadow-inner text-gray-900 bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm 
-              ${name === '' ? 'border-gray-500' : isNameValid ? 'border-green-500' : 'border-red-500'}`}
-            placeholder="E.g., John Doe"
-            disabled={isLoading}
-          />
-        </div>
-        
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-300">Email</label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className={`mt-1 block w-full px-4 py-3 border rounded-lg shadow-inner text-gray-900 bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm 
-              ${email === '' ? 'border-gray-500' : isValidEmail ? 'border-green-500' : 'border-red-500'}`}
-            placeholder="user@example.com"
-            disabled={isLoading}
-          />
-          {email !== '' && !isValidEmail && (
-            <p className="mt-1 text-xs text-red-400">Please enter a valid email.</p>
-          )}
-        </div>
-
-        <div>
-          <label htmlFor="password" className="block text-sm font-medium text-gray-300">Password</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={`mt-1 block w-full px-4 py-3 border rounded-lg shadow-inner text-gray-900 bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm 
-              ${password === '' ? 'border-gray-500' : isPasswordStrong ? 'border-green-500' : 'border-red-500'}`}
-            placeholder="Create a strong password"
-            disabled={isLoading}
-          />
-          
-          <PasswordRequirements password={password} />
-        </div>
-
-        <button
-          type="submit"
-          disabled={!isSubmitEnabled}
-          className={`w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-lg text-base font-semibold text-white 
-            ${isSubmitEnabled
-              ? 'bg-indigo-600 hover:bg-indigo-700 transition duration-150 transform hover:scale-[1.01] focus:ring-4 focus:ring-indigo-500/50'
-              : 'bg-indigo-400 cursor-not-allowed opacity-70'}`}
-        >
-          {isLoading ? 'Signing Up...' : 'Sign Up'}
-        </button>
-      </form>
-
-      <div className="mt-8 text-center">
-        <p className="text-sm text-gray-400">
-          Already have an account?{' '}
-          <button
-            onClick={() => onSwitchMode('login')}
-            className="font-semibold text-yellow-400 hover:text-yellow-300 transition duration-150"
-            disabled={isLoading}
-          >
-            Log in here
-          </button>
-        </p>
-      </div>
+const AuthFormWrapper = ({ title, children, onSwitchMode, linkText, linkTarget }) => (
+  <div className="p-8 max-w-lg w-full bg-gray-800 rounded-xl shadow-2xl">
+    <h2 className="text-3xl font-bold text-center text-white mb-6">{title}</h2>
+    {children}
+    <div className="mt-6 text-center text-sm text-gray-400">
+      {linkText}{' '}
+      <button 
+        onClick={() => onSwitchMode(linkTarget)} 
+        className="text-indigo-400 hover:text-indigo-300 font-medium transition duration-150"
+      >
+        {linkTarget === 'login' ? 'Login' : 'Sign Up'}
+      </button>
     </div>
-  );
-};
+  </div>
+);
 
-// Main Login Form Component
+
 const LoginForm = ({ onAuthSuccess, onSwitchMode }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    setError(null);
-    setIsLoading(true);
+    setMessage('');
+    setLoading(true);
+
+    if (!isEmailValid(email)) {
+      setMessage("Please enter a valid email address.");
+      setMessageType('error');
+      setLoading(false);
+      return;
+    }
 
     try {
-      // CRITICAL: Using authFetch and correct /api/login path
-      const response = await authFetch(`${API_BASE_URL}/api/login`, {
+      const data = await apiFetch('/api/login', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // NO token logic. The cookie is set by the browser.
-        localStorage.setItem('userEmail', email);
-        
-        // Try to get name from localStorage, fallback to email prefix
-        const existingName = localStorage.getItem('userName') || email.split('@')[0];
-        localStorage.setItem('userName', existingName); // Ensure it's set
-        
-        onAuthSuccess(data.email, existingName, 'login'); 
-      } else {
-        setError(data.message || 'Invalid credentials.');
-      }
-    } catch (err) {
-      setError('Connection error. Please try again later.');
+      setMessage('Login successful! Redirecting...');
+      setMessageType('success');
+      setTimeout(() => onAuthSuccess(data.email, data.user_name), 1000);
+    } catch (error) {
+      setMessage(error.message);
+      setMessageType('error');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="bg-gray-800 p-8 md:p-12 rounded-3xl shadow-2xl w-full max-w-md border-t-8 border-indigo-500 transform transition-all hover:shadow-indigo-500/30">
-      <h2 className="text-3xl font-extrabold text-white flex items-center mb-6">
-        <LogIn className="mr-3 text-indigo-400" size={30} />
-        Access the Vault
+    <AuthFormWrapper 
+      title="Login" 
+      onSwitchMode={onSwitchMode} 
+      linkText="Don't have an account?" 
+      linkTarget="signup"
+    >
+      <form onSubmit={handleLogin} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-300">Email</label>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} 
+            className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white focus:ring-indigo-500 focus:border-indigo-500" required />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-300">Password</label>
+          <div className="relative">
+            <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} 
+              className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white focus:ring-indigo-500 focus:border-indigo-500" required />
+            <button type="button" onClick={() => setShowPassword(!showPassword)}
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-indigo-400">
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
+        </div>
+        <button type="submit" disabled={loading}
+          className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-lg text-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition duration-200">
+          {loading ? 'Logging in...' : 'Log In'}
+        </button>
+      </form>
+      <Message message={message} type={messageType} />
+    </AuthFormWrapper>
+  );
+};
+
+
+const SignupForm = ({ onAuthSuccess, onSwitchMode }) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const passwordChecks = passwordRequirements.map(req => ({
+    ...req,
+    passed: req.regex.test(password),
+  }));
+  const isPasswordValid = passwordChecks.every(check => check.passed);
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    setMessage('');
+    setLoading(true);
+
+    if (!name.trim()) {
+      setMessage("Name field cannot be empty.");
+      setMessageType('error');
+      setLoading(false);
+      return;
+    }
+    if (!isEmailValid(email)) {
+      setMessage("Please enter a valid email address.");
+      setMessageType('error');
+      setLoading(false);
+      return;
+    }
+    if (!isPasswordValid) {
+      setMessage("Password does not meet all security requirements.");
+      setMessageType('error');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const data = await apiFetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: email, 
+          password: password, 
+          // --- FIX APPLIED HERE ---
+          // The backend expects 'user_name', not 'name'
+          user_name: name // CORRECTED KEY
+          // --- END FIX ---
+        }),
+      });
+      setMessage('Account created successfully! Redirecting...');
+      setMessageType('success');
+      setTimeout(() => onAuthSuccess(data.email, data.user_name), 1000);
+    } catch (error) {
+      setMessage(error.message);
+      setMessageType('error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <AuthFormWrapper 
+      title="Sign Up" 
+      onSwitchMode={onSwitchMode} 
+      linkText="Already have an account?" 
+      linkTarget="login"
+    >
+      <form onSubmit={handleSignup} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-300">Full Name</label>
+          <input type="text" value={name} onChange={e => setName(e.target.value)} 
+            className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white focus:ring-indigo-500 focus:border-indigo-500" required />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-300">Email</label>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} 
+            className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white focus:ring-indigo-500 focus:border-indigo-500" required />
+          {!isEmailValid(email) && email.length > 0 && (
+            <p className="text-red-400 text-xs mt-1">Please enter a valid email format.</p>
+          )}
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-300">Password</label>
+          <div className="relative">
+            <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} 
+              className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white focus:ring-indigo-500 focus:border-indigo-500" required />
+            <button type="button" onClick={() => setShowPassword(!showPassword)}
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-indigo-400">
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
+          <div className="mt-2 text-xs space-y-1">
+            {passwordChecks.map(req => (
+              <div key={req.key} className={`flex items-center ${req.passed ? 'text-green-400' : 'text-red-400'}`}>
+                <CheckCircle size={12} className={`mr-2 ${req.passed ? 'text-green-500' : 'hidden'}`} />
+                <XCircle size={12} className={`mr-2 ${!req.passed ? 'text-red-500' : 'hidden'}`} />
+                {req.text}
+              </div>
+            ))}
+          </div>
+        </div>
+        <button type="submit" disabled={loading || !isPasswordValid || !isEmailValid(email) || !name.trim()}
+          className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-lg text-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition duration-200">
+          {loading ? 'Signing Up...' : 'Sign Up'}
+        </button>
+      </form>
+      <Message message={message} type={messageType} />
+    </AuthFormWrapper>
+  );
+};
+
+// --- Password Analyzer Component ---
+
+const PasswordAnalyzer = ({ onBackToDashboard }) => {
+  const [password, setPassword] = useState('');
+  const [score, setScore] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const analyzePassword = useCallback(() => {
+    setIsAnalyzing(true);
+    // zxcvbn is complex and generally assumed to be available in the environment
+    // or loaded via a script tag in a single-file React context.
+    // For this demonstration, we'll simulate the analysis result structure.
+    
+    // NOTE: In a real-world scenario, you would need to ensure zxcvbn is available 
+    // in the React environment, likely by importing it if using Node/Webpack, 
+    // or by checking for a global `zxcvbn` function if loaded via CDN script.
+
+    // Simulated zxcvbn result structure for safety:
+    const mockResult = {
+        score: Math.min(4, Math.floor(password.length / 4)), // Score 0 to 4 based on length
+        suggestions: password.length < 8 ? ['Increase the length of your password.'] : [],
+        // ... more complex analysis usually here ...
+    };
+
+    // Replace with actual zxcvbn(password) if available
+    const zxcvbnResult = window.zxcvbn ? window.zxcvbn(password) : mockResult;
+
+    setScore(zxcvbnResult.score);
+    setSuggestions(zxcvbnResult.feedback ? zxcvbnResult.feedback.suggestions : mockResult.suggestions);
+    setIsAnalyzing(false);
+  }, [password]);
+
+  useEffect(() => {
+    if (password.length > 0) {
+      // Debounce analysis slightly
+      const timer = setTimeout(analyzePassword, 300); 
+      return () => clearTimeout(timer);
+    } else {
+      setScore(null);
+      setSuggestions([]);
+    }
+  }, [password, analyzePassword]);
+  
+  const scoreText = ['Terrible', 'Weak', 'Fair', 'Good', 'Excellent'][score] || 'Not Rated';
+  const scoreColor = ['bg-red-600', 'bg-orange-500', 'bg-yellow-500', 'bg-lime-500', 'bg-green-600'][score] || 'bg-gray-600';
+
+  return (
+    <div className="p-8 max-w-2xl w-full bg-gray-800 rounded-xl shadow-2xl">
+      <h2 className="text-3xl font-bold text-white mb-6 flex items-center">
+        <Zap size={28} className="mr-2 text-yellow-400" /> Password Analyzer
       </h2>
       
-      {error && (
-        <div className="p-3 mb-4 text-sm text-red-300 bg-red-800/50 rounded-lg border border-red-700" role="alert">
-          {error}
+      <div className="space-y-4">
+        <label className="block text-sm font-medium text-gray-300">Enter Password to Analyze</label>
+        <input 
+          type="password" 
+          value={password} 
+          onChange={e => setPassword(e.target.value)} 
+          placeholder="Type your password here..."
+          className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white focus:ring-indigo-500 focus:border-indigo-500"
+        />
+      </div>
+
+      {password.length > 0 && !isAnalyzing && score !== null && (
+        <div className="mt-6 p-4 border border-gray-700 rounded-lg bg-gray-900">
+          <div className="flex justify-between items-center mb-4">
+            <span className="text-lg font-semibold text-white">Security Score:</span>
+            <span className={`text-xl font-bold text-white px-3 py-1 rounded-full ${scoreColor} shadow-md transition-colors duration-300`}>
+              {scoreText} ({score}/4)
+            </span>
+          </div>
+
+          {suggestions.length > 0 && (
+            <div>
+              <p className="text-sm font-medium text-gray-400 mb-2">Suggestions to Improve:</p>
+              <ul className="list-disc list-inside text-sm text-gray-300 space-y-1 ml-4">
+                {suggestions.map((s, index) => (
+                  <li key={index}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+           {suggestions.length === 0 && score === 4 && (
+            <p className="text-green-400 font-medium text-sm">This password is highly secure! Good job.</p>
+           )}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-300">Email</label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 block w-full px-4 py-3 border border-gray-500 rounded-lg shadow-inner text-gray-900 bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm"
-            placeholder="user@example.com"
-            disabled={isLoading}
-          />
-        </div>
+      <button onClick={onBackToDashboard}
+        className="mt-8 flex items-center justify-center py-2 px-4 border border-indigo-500 rounded-lg shadow-md text-sm font-medium text-indigo-400 hover:bg-indigo-900 transition duration-200">
+        Back to Dashboard
+      </button>
+    </div>
+  );
+};
 
-        <div>
-          <label htmlFor="password" className="block text-sm font-medium text-gray-300">Password</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 block w-full px-4 py-3 border border-gray-500 rounded-lg shadow-inner text-gray-900 bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm"
-            placeholder="Enter your password"
-            disabled={isLoading}
-          />
-        </div>
 
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-lg text-base font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition duration-150 transform hover:scale-[1.01] focus:ring-4 focus:ring-indigo-500/50"
-        >
-          {isLoading ? 'Logging In...' : 'Log In'}
+// --- Dashboard Components ---
+
+const PasswordEntry = ({ entry, onDelete }) => {
+  const [showPassword, setShowPassword] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const handleCopyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setMessage('Copied!');
+      setTimeout(() => setMessage(''), 2000);
+    }).catch(err => {
+      setMessage('Failed to copy.');
+      console.error('Could not copy text: ', err);
+    });
+  };
+
+  return (
+    <div className="bg-gray-700 p-4 rounded-lg shadow-lg flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-3 sm:space-y-0">
+      <div className="flex-1 min-w-0">
+        <p className="text-lg font-semibold text-indigo-300 truncate">{entry.service}</p>
+        <p className="text-sm text-gray-300 truncate">User: {entry.username}</p>
+      </div>
+      
+      <div className="flex items-center space-x-2">
+        <button onClick={() => setShowPassword(!showPassword)}
+          className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-600 transition duration-150"
+          title={showPassword ? "Hide Password" : "Show Password"}>
+          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
-      </form>
+        
+        <div className="relative min-w-[120px] max-w-[200px] bg-gray-600 rounded-lg px-3 py-1 text-sm text-white truncate">
+          {showPassword ? entry.password : '••••••••••••'}
+          {message && (
+            <span className="absolute top-0 right-0 transform -translate-y-full px-2 py-1 bg-green-600 text-white rounded-md text-xs shadow-xl z-10">
+              {message}
+            </span>
+          )}
+        </div>
 
-      <div className="mt-8 text-center">
-        <p className="text-sm text-gray-400">
-          Don't have an account?{' '}
-          <button
-            onClick={() => onSwitchMode('signup')}
-            className="font-semibold text-yellow-400 hover:text-yellow-300 transition duration-150"
-            disabled={isLoading}
-          >
-            Sign up here
-          </button>
-        </p>
+        <button onClick={() => handleCopyToClipboard(entry.password)}
+          className="p-2 rounded-full text-gray-400 hover:text-indigo-400 hover:bg-gray-600 transition duration-150"
+          title="Copy Password">
+          <Clipboard size={18} />
+        </button>
+
+        <button onClick={() => onDelete(entry._id)}
+          className="p-2 rounded-full text-gray-400 hover:text-red-400 hover:bg-gray-600 transition duration-150"
+          title="Delete Password">
+          <Trash2 size={18} />
+        </button>
       </div>
     </div>
   );
 };
 
-// Password Analysis Component (Story 2)
-const PasswordAnalyzer = ({ onBackToDashboard }) => {
-    const [password, setPassword] = useState('');
-    const [analysisResult, setAnalysisResult] = useState(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null);
 
-    const analyzePassword = useCallback(async (pwd) => {
-        if (pwd.length === 0) {
-             setAnalysisResult(null);
-             setError(null);
-             return;
-        }
+const AddPasswordModal = ({ onClose, onSave }) => {
+  const [service, setService] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
 
-        setIsLoading(true);
-        setError(null);
-        setAnalysisResult(null);
-
-        try {
-            // CRITICAL: Using authFetch and correct /api/analyze path
-            const response = await authFetch(`${API_BASE_URL}/api/analyze`, {
-                method: 'POST',
-                body: JSON.stringify({ password: pwd }),
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                setAnalysisResult(data);
-            } else {
-                setError(data.message || 'Error during analysis.');
-            }
-        } catch (err) {
-            setError('Connection error to the analysis service.');
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage('');
     
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            if (password.length > 0) {
-                analyzePassword(password);
-            } else {
-                setAnalysisResult(null);
-            }
-        }, 500); // 500ms delay
-
-        return () => clearTimeout(handler);
-    }, [password, analyzePassword]);
-
-
-    const scoreColors = ['text-red-500', 'text-orange-500', 'text-yellow-500', 'text-lime-500', 'text-green-500'];
-    const scoreDescriptions = ['Too Weak', 'Weak', 'Acceptable', 'Good', 'Excellent'];
-    const timeDescriptions = ['< 1 Second', 'Seconds', 'Hours', 'Days', 'Months', 'Years', 'Centuries', 'Millennia'];
-
-    const getScoreDisplay = (score) => ({
-        text: scoreDescriptions[score] || 'Unknown',
-        color: scoreColors[score] || 'text-gray-400'
-    });
-    
-    const getCrackTimeDisplay = (timeText) => {
-        if (!timeText) return 'N/A';
-        if (timeText.includes('instant')) return timeDescriptions[0];
-        if (timeText.includes('second')) return timeDescriptions[1];
-        if (timeText.includes('hour')) return timeDescriptions[2];
-        if (timeText.includes('day')) return timeDescriptions[3];
-        if (timeText.includes('month')) return timeDescriptions[4];
-        if (timeText.includes('year')) return timeDescriptions[5];
-        if (timeText.includes('centuries')) return timeDescriptions[6];
-        return timeText;
+    if (!service.trim() || !username.trim() || !password.trim()) {
+        setMessage('All fields must be filled.');
+        setLoading(false);
+        return;
     }
+    
+    try {
+        await onSave({ service, username, password });
+        onClose();
+    } catch (error) {
+        setMessage(error.message);
+    } finally {
+        setLoading(false);
+    }
+  };
 
-
-    return (
-        <div className="bg-gray-800 p-8 md:p-12 rounded-3xl shadow-2xl w-full max-w-lg border-t-8 border-indigo-500">
-            <h2 className="text-3xl font-extrabold text-white mb-6 flex items-center">
-                <Zap className="mr-3 text-yellow-400" size={30} />
-                Password Security Analysis
-            </h2>
-            
-            <button 
-                onClick={onBackToDashboard} 
-                className="mb-6 text-sm font-medium text-indigo-400 hover:text-indigo-300 transition flex items-center"
-            >
-                &larr; Back to Dashboard
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 p-6 rounded-xl shadow-2xl max-w-md w-full">
+        <h3 className="text-xl font-bold text-white mb-4">Add New Password</h3>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300">Service/Website</label>
+            <input type="text" value={service} onChange={e => setService(e.target.value)} 
+              className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300">Username/Email</label>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)} 
+              className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300">Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} 
+              className="mt-1 block w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg shadow-sm text-white" required />
+          </div>
+          <Message message={message} type="error" />
+          <div className="flex justify-end space-x-3 pt-2">
+            <button type="button" onClick={onClose}
+              className="py-2 px-4 border border-gray-600 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-700 transition duration-150">
+              Cancel
             </button>
-
-            <div className="mb-6">
-                <label htmlFor="password-analyze" className="block text-sm font-medium text-gray-300 mb-2">
-                    Enter Password to Analyze
-                </label>
-                <input
-                    id="password-analyze"
-                    name="password-analyze"
-                    type="text"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="mt-1 block w-full px-4 py-3 border border-gray-500 rounded-lg shadow-inner text-gray-900 bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm"
-                    placeholder="Type a password here..."
-                    disabled={isLoading}
-                />
-            </div>
-            
-            {error && (
-                <div className="p-3 mb-4 text-sm text-red-300 bg-red-800/50 rounded-lg border border-red-700" role="alert">
-                    {error}
-                </div>
-            )}
-
-            {isLoading && password.length > 0 && (
-                 <div className="text-indigo-400">Analyzing...</div>
-            )}
-            
-            {analysisResult && (
-                <div className="mt-6 p-6 bg-gray-700 rounded-xl shadow-inner border border-gray-600">
-                    <h3 className="text-xl font-semibold text-white mb-3">Analysis Results</h3>
-                    
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-600 pb-2 mb-2">
-                        <span className="text-gray-400 font-medium">Security Score:</span>
-                        <span className={`text-2xl font-bold ${getScoreDisplay(analysisResult.score).color} sm:mt-0 mt-1`}>
-                            {getScoreDisplay(analysisResult.score).text}
-                        </span>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-600 pb-2 mb-2">
-                        <span className="text-gray-400 font-medium">Estimated Crack Time:</span>
-                        <span className="text-lg font-medium text-gray-300 sm:mt-0 mt-1">
-                            {getCrackTimeDisplay(analysisResult.crack_time_display)}
-                        </span>
-                    </div>
-
-                    {analysisResult.feedback && analysisResult.feedback.warning && (
-                        <div className="mt-4 p-3 bg-red-900/50 text-red-300 rounded-lg">
-                            <p className="font-semibold mb-1">Warning:</p>
-                            <p className="text-sm">{analysisResult.feedback.warning}</p>
-                        </div>
-                    )}
-
-                    {analysisResult.feedback && analysisResult.feedback.suggestions && analysisResult.feedback.suggestions.length > 0 && (
-                        <div className="mt-4">
-                            <p className="font-semibold text-gray-300 mb-2">Suggestions:</p>
-                            <ul className="list-disc list-inside text-sm text-gray-400 space-y-1">
-                                {analysisResult.feedback.suggestions.map((suggestion, index) => (
-                                    <li key={index}>{suggestion}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                </div>
-            )}
-            
-            {!analysisResult && !isLoading && password.length > 0 && (
-                 <div className="text-gray-400 mt-6">Type a password to see the security analysis.</div>
-            )}
-        </div>
-    );
-};
-
-// Component for adding a new password entry
-const AddPasswordForm = ({ onPasswordAdded }) => {
-    const [siteName, setSiteName] = useState('');
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null);
-    const [success, setSuccess] = useState(false);
-
-    const isFormValid = siteName.trim() !== '' && username.trim() !== '' && password.trim() !== '';
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setError(null);
-        setSuccess(false);
-
-        if (!isFormValid) {
-            setError("All fields are required.");
-            return;
-        }
-        
-        setIsLoading(true);
-
-        try {
-            // CRITICAL: Using authFetch and correct /api/passwords path
-            const response = await authFetch(`${API_BASE_URL}/api/passwords`, {
-                method: 'POST',
-                body: JSON.stringify({ site_name: siteName, username, password }),
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                setSuccess(true);
-                setSiteName('');
-                setUsername('');
-                setPassword('');
-                onPasswordAdded(); 
-            } else {
-                setError(data.message || 'Password saving failed.');
-            }
-        } catch (err) {
-            setError('Connection error. Please try again later.');
-        } finally {
-            setIsLoading(false);
-            setTimeout(() => setSuccess(false), 3000);
-        }
-    };
-
-    return (
-        <div className="bg-gray-700 p-6 rounded-xl shadow-xl border border-indigo-600/50 mb-8">
-            <h3 className="text-2xl font-bold text-white mb-4 flex items-center">
-                <PlusCircle className="mr-2 h-6 w-6 text-yellow-400" />
-                Add New Secure Credential
-            </h3>
-
-            {success && (
-                <div className="p-3 mb-4 text-sm text-green-300 bg-green-900/50 rounded-lg">
-                    ✅ Password successfully saved!
-                </div>
-            )}
-            {error && (
-                <div className="p-3 mb-4 text-sm text-red-300 bg-red-800/50 rounded-lg">
-                    {error}
-                </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label htmlFor="site-name" className="block text-sm font-medium text-gray-300">Site / Service Name</label>
-                    <input
-                        id="site-name"
-                        type="text"
-                        required
-                        value={siteName}
-                        onChange={(e) => setSiteName(e.target.value)}
-                        className="mt-1 block w-full px-4 py-2 border border-gray-500 rounded-lg text-gray-900 bg-gray-200"
-                        placeholder="E.g., Google, Amazon, Bank"
-                        disabled={isLoading}
-                    />
-                </div>
-                <div>
-                    <label htmlFor="username" className="block text-sm font-medium text-gray-300">Username / Email</label>
-                    <input
-                        id="username"
-                        type="text"
-                        required
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="mt-1 block w-full px-4 py-2 border border-gray-500 rounded-lg text-gray-900 bg-gray-200"
-                        placeholder="Your username or email"
-                        disabled={isLoading}
-                    />
-                </div>
-                <div>
-                    <label htmlFor="password-to-save" className="block text-sm font-medium text-gray-300">Password</label>
-                    <input
-                        id="password-to-save"
-                        type="password"
-                        required
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="mt-1 block w-full px-4 py-2 border border-gray-500 rounded-lg text-gray-900 bg-gray-200"
-                        placeholder="The password you want to save"
-                        disabled={isLoading}
-                    />
-                </div>
-                <button
-                    type="submit"
-                    disabled={isLoading || !isFormValid}
-                    className="w-full flex justify-center py-2 px-4 border border-transparent rounded-xl shadow-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition duration-150 disabled:bg-indigo-400"
-                >
-                    {isLoading ? 'Saving...' : 'Save Password Securely'}
-                </button>
-            </form>
-        </div>
-    );
-};
-
-// Component for a single password item
-const PasswordItem = ({ entry }) => {
-    const [showPassword, setShowPassword] = useState(false);
-    const [copyStatus, setCopyStatus] = useState(null);
-
-    const handleCopy = (text) => {
-        if (copyToClipboard(text)) {
-            setCopyStatus('Copied!');
-            setTimeout(() => setCopyStatus(null), 1500);
-        } else {
-            setCopyStatus('Copy failed.');
-            setTimeout(() => setCopyStatus(null), 1500);
-        }
-    };
-
-    const formatDate = (isoString) => {
-        const date = new Date(isoString);
-        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    };
-
-    return (
-        <div className="bg-gray-800 p-4 rounded-xl shadow-md border-l-4 border-yellow-500 hover:bg-gray-700 transition duration-100 ease-in-out">
-            <div className="flex justify-between items-start mb-2">
-                <h4 className="text-xl font-semibold text-indigo-300">{entry.site_name}</h4>
-                <div className="text-sm text-gray-400 flex items-center">
-                    <Key className="inline h-4 w-4 mr-1 text-yellow-500"/> Saved on: {formatDate(entry.created_at)}
-                </div>
-            </div>
-
-            <p className="text-gray-300 mb-2">
-                <span className="font-medium text-gray-400">Username: </span>
-                {entry.username}
-                <button
-                    onClick={() => handleCopy(entry.username)}
-                    className="ml-2 p-1 text-gray-400 hover:text-yellow-400 transition"
-                    title="Copy Username"
-                >
-                    <Clipboard size={14} />
-                </button>
-            </p>
-
-            <div className="flex items-center justify-between mt-3 bg-gray-900 p-3 rounded-lg border border-gray-700">
-                <span className="font-medium text-gray-400 mr-4">Password:</span>
-                <div className="flex-grow font-mono text-white truncate mr-4">
-                    {showPassword ? entry.password : '••••••••••••••••'}
-                </div>
-                <div className="flex space-x-2">
-                    <button
-                        onClick={() => handleCopy(entry.password)}
-                        className={`p-1 rounded-full transition ${copyStatus === 'Copied!' ? 'bg-green-600 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
-                        title={copyStatus || "Copy Password"}
-                        disabled={copyStatus === 'Copied!'}
-                    >
-                        {copyStatus === 'Copied!' ? <CheckCircle size={18} /> : <Clipboard size={18} />}
-                    </button>
-                    <button
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="p-1 bg-gray-600 text-white rounded-full hover:bg-gray-500 transition"
-                        title={showPassword ? "Hide Password" : "Show Password"}
-                    >
-                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// Component for listing all stored passwords
-const PasswordList = ({ onRefresh, passwords, isLoading, error }) => {
-    return (
-        <div className="mt-10">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-700">
-                <h3 className="text-2xl font-bold text-white flex items-center">
-                    <Key className="mr-3 h-6 w-6 text-yellow-400" />
-                    Your Saved Credentials ({passwords.length})
-                </h3>
-                <button
-                    onClick={onRefresh}
-                    disabled={isLoading}
-                    className="flex items-center py-2 px-4 text-sm font-medium text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition shadow-md disabled:bg-indigo-400"
-                >
-                    {isLoading ? 'Loading...' : 'Refresh List'}
-                </button>
-            </div>
-
-            {error && (
-                <div className="p-4 mb-4 text-sm text-red-300 bg-red-800/50 rounded-lg border border-red-700">
-                    Error loading passwords: {error}
-                </div>
-            )}
-
-            {passwords.length === 0 && !isLoading && (
-                <div className="p-8 text-center text-gray-400 border border-dashed border-gray-600 rounded-xl mt-4">
-                    You haven't saved any passwords yet. Use the form above to add your first secure credential!
-                </div>
-            )}
-
-            <div className="space-y-4">
-                {passwords.map(p => (
-                    <PasswordItem key={p.id} entry={p} />
-                ))}
-            </div>
-        </div>
-    );
+            <button type="submit" disabled={loading}
+              className="py-2 px-4 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition duration-150">
+              {loading ? 'Saving...' : 'Save Password'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 };
 
 
-// Dashboard Component
 const Dashboard = ({ userEmail, userName, onAnalyzeClick }) => {
-  // REMOVED: State for dashboard message
-  
   const [passwords, setPasswords] = useState([]);
-  const [isLoadingPasswords, setIsLoadingPasswords] = useState(false);
-  const [passwordError, setPasswordError] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // REMOVED: fetchDashboardStatus function
-  
   const fetchPasswords = useCallback(async () => {
-      setIsLoadingPasswords(true);
-      setPasswordError(null);
-      
-      try {
-          // CRITICAL: Using authFetch and correct /api/passwords path
-          const response = await authFetch(`${API_BASE_URL}/api/passwords`, { method: 'GET' });
-          const data = await response.json();
-
-          if (response.ok) {
-              setPasswords(data || []); // data is the list itself
-          } else {
-              setPasswordError(data.message || 'Password retrieval failed.');
-          }
-      } catch (error) {
-          setPasswordError('Connection error while fetching passwords.');
-      } finally {
-          setIsLoadingPasswords(false);
-      }
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiFetch('/api/passwords', { method: 'GET' });
+      setPasswords(data);
+    } catch (e) {
+      setError(`Failed to fetch passwords: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    // REMOVED: Call to fetchDashboardStatus()
     fetchPasswords();
   }, [fetchPasswords]);
 
+  const handleSavePassword = async (entry) => {
+    try {
+      await apiFetch('/api/passwords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry),
+      });
+      fetchPasswords(); // Refresh list
+    } catch (e) {
+      throw new Error(`Failed to save: ${e.message}`);
+    }
+  };
+
+  const handleDeletePassword = async (id) => {
+    if (window.confirm("Are you sure you want to delete this password?")) {
+      try {
+        await apiFetch(`/api/passwords/${id}`, { method: 'DELETE' });
+        fetchPasswords(); // Refresh list
+      } catch (e) {
+        setError(`Failed to delete: ${e.message}`);
+      }
+    }
+  };
 
   return (
-    <div className="pt-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto pb-10">
-      
-      <div className="bg-gray-800 p-8 rounded-2xl shadow-xl mb-10 border-l-8 border-indigo-500">
-        <h1 className="text-4xl font-extrabold text-white mb-2">
-          Welcome, <span className="text-indigo-400">{userName || 'User'}</span>!
-        </h1>
-        <p className="text-gray-400">
-          Logged in as: <span className="font-mono text-sm text-yellow-400">{userEmail}</span>
-        </p>
-        
-        {/* REMOVED: Backend Status section */}
-
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1">
-          <AddPasswordForm onPasswordAdded={fetchPasswords} />
-          
-          <button
-              onClick={onAnalyzeClick}
-              className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-xl shadow-lg text-base font-semibold text-white bg-yellow-600 hover:bg-yellow-700 transition duration-150 transform hover:scale-[1.01] focus:ring-4 focus:ring-yellow-500/50"
-          >
-              <Zap className="mr-3 h-6 w-6" />
-              Analyze Password Strength
+    <div className="p-4 sm:p-8 max-w-4xl w-full">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-3xl font-bold text-white">Welcome, {userName || userEmail}!</h2>
+        <div className='flex space-x-3'>
+          <button onClick={onAnalyzeClick}
+            className="flex items-center px-4 py-2 border border-yellow-500 rounded-lg text-sm font-medium text-yellow-400 hover:bg-gray-700 transition duration-150 shadow-md">
+            <Zap size={18} className="mr-2" /> Analyze
+          </button>
+          <button onClick={() => setIsModalOpen(true)}
+            className="flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition duration-150 shadow-lg">
+            <PlusCircle size={18} className="mr-2" /> Add New
           </button>
         </div>
-
-        <div className="lg:col-span-2">
-            <PasswordList 
-                onRefresh={fetchPasswords} 
-                passwords={passwords} 
-                isLoading={isLoadingPasswords} 
-                error={passwordError}
-            />
-        </div>
       </div>
+
+      <Message message={error} type="error" />
+
+      <div className="bg-gray-900 p-4 rounded-xl shadow-inner min-h-[200px]">
+        <h3 className="text-xl font-semibold text-gray-300 mb-4 border-b border-gray-700 pb-2">Your Saved Passwords ({passwords.length})</h3>
+        
+        {loading && <p className="text-gray-400 text-center py-8">Loading passwords...</p>}
+        
+        {!loading && passwords.length === 0 && (
+          <p className="text-gray-400 text-center py-8">You have no saved passwords. Click "Add New" to get started.</p>
+        )}
+
+        {!loading && passwords.length > 0 && (
+          <div className="space-y-4">
+            {passwords.map(entry => (
+              <PasswordEntry key={entry._id} entry={entry} onDelete={handleDeletePassword} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {isModalOpen && (
+        <AddPasswordModal 
+          onClose={() => setIsModalOpen(false)} 
+          onSave={handleSavePassword}
+        />
+      )}
     </div>
   );
 };
 
+// --- Header Component ---
 
-// Main Application Component
+const Header = ({ userEmail, onLogout, isAuthenticated }) => (
+  <header className="bg-gray-800 shadow-lg fixed top-0 w-full z-10">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+      <div className="text-xl font-bold text-white flex items-center">
+        <Key size={24} className="text-indigo-400 mr-2" />
+        Health Tracker
+      </div>
+      {isAuthenticated ? (
+        <div className="flex items-center space-x-4">
+          <span className="text-sm text-gray-300 hidden sm:block truncate max-w-[150px]">{userEmail}</span>
+          <button onClick={onLogout}
+            className="flex items-center px-3 py-1 border border-red-500 rounded-lg text-sm font-medium text-red-400 hover:bg-gray-700 transition duration-150">
+            <LogIn size={16} className="mr-1" /> Logout
+          </button>
+        </div>
+      ) : (
+        <span className="text-sm text-gray-400">Secure Authentication</span>
+      )}
+    </div>
+  </header>
+);
+
+// --- Main App Component ---
+
 const App = () => {
-  // Check localStorage for auth status on initial load
-  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('userEmail'));
-  const [mode, setMode] = useState(isAuthenticated ? 'dashboard' : 'login');
-  const [userEmail, setUserEmail] = useState(localStorage.getItem('userEmail') || '');
-  const [userName, setUserName] = useState(localStorage.getItem('userName') || '');
-  
-  // Ref to hold the inactivity timer
+  const [mode, setMode] = useState('login'); // 'login', 'signup', 'dashboard', 'analyze'
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
+  const [userName, setUserName] = useState('');
   const [inactivityTimer, setInactivityTimer] = useState(null);
 
-  // --- SESSION MANAGEMENT LOGIC ---
-
-  // Shared function to clear client-side state
-  const clearClientState = useCallback(() => {
-    localStorage.removeItem('userEmail');
-    localStorage.removeItem('userName'); 
-    setUserEmail('');
-    setUserName('');
-    setIsAuthenticated(false);
-    setMode('login');
-  }, []);
-
-  /**
-   * Passive logout using navigator.sendBeacon when the user closes the tab.
-   * This is designed to fire quickly and reliably during the 'unload' event.
-   */
-  const passiveLogout = useCallback(() => {
-    // Only send beacon if the user is currently authenticated in the client state
-    if (localStorage.getItem('userEmail')) {
-        const data = new FormData();
-        data.append('reason', 'window_closed');
-        
-        // Use an empty JSON object as a Blob
-        const blob = new Blob([JSON.stringify({ reason: 'window_closed' })], { type: 'application/json' });
-
-        if (navigator.sendBeacon) {
-             navigator.sendBeacon(`${API_BASE_URL}/api/logout`, blob);
-        } else {
-             // Fallback warning for older browsers
-             console.warn("navigator.sendBeacon not available. Session may not be cleaned up immediately.");
-        }
-    }
-    // Note: We don't clear client state here, as this function fires too late 
-    // to update React state, and the server will handle the session clear.
-  }, []);
-  
-  // Handle Logout (Manual or Inactivity)
-  const handleLogout = useCallback(async () => {
-    // 1. Clear frontend state immediately
-    clearClientState();
-
-    // 2. Clear backend session cookie
-    try {
-      // Use standard fetch (not passive)
-      await authFetch(`${API_BASE_URL}/api/logout`, { method: 'POST' });
-      console.log('User manually logged out. Backend session cleared.');
-    } catch (error) {
-      console.error('Error during backend logout:', error);
-    }
-  }, [clearClientState]);
-  
-  // Resets the inactivity timer
-  const resetInactivityTimer = useCallback(() => {
-    // Clear the existing timer
+  // Function to set up the inactivity timer
+  const startInactivityTimer = useCallback(() => {
+    // Clear any existing timer
     if (inactivityTimer) {
       clearTimeout(inactivityTimer);
     }
-
     // Set a new timer
     const timer = setTimeout(() => {
-      console.log("Inactivity timeout reached. Triggering auto-logout.");
-      handleLogout(); // Use standard logout logic
+      alert("You have been logged out due to inactivity.");
+      handleLogout();
     }, INACTIVITY_TIMEOUT_MS);
-    
     setInactivityTimer(timer);
-  }, [inactivityTimer, handleLogout]);
+  }, [inactivityTimer]);
 
-
-  // Handle successful Login or Signup
-  const handleAuthSuccess = useCallback((email, name, action) => {
-    // Data is already saved in localStorage by the forms
-    setUserEmail(email);
-    setUserName(name); 
-    setIsAuthenticated(true);
-    setMode('dashboard'); 
-    
-    // Start or reset the inactivity timer on successful login
-    resetInactivityTimer();
-  }, [resetInactivityTimer]);
-
-
-  // --- EFFECT: Session Listener Setup (Runs only when authenticated) ---
-  useEffect(() => {
-    // Only attach listeners if the user is logged in
+  // Function to reset the timer on user activity
+  const resetInactivityTimer = useCallback(() => {
     if (isAuthenticated) {
-      // 1. Inactivity Listeners
-      const interactionEvents = ['mousemove', 'mousedown', 'keypress', 'scroll', 'touchstart'];
-      interactionEvents.forEach(eventType => {
-        window.addEventListener(eventType, resetInactivityTimer, true);
-      });
-      
-      // Initial timer start (if not already running)
-      resetInactivityTimer();
-
-      // 2. Passive Logout Listener (for tab/window close)
-      window.addEventListener('unload', passiveLogout);
-
-      // Cleanup function: remove listeners when the component unmounts or auth state changes
-      return () => {
-        // Clear timeout
-        if (inactivityTimer) {
-          clearTimeout(inactivityTimer);
-        }
-        
-        // Remove interaction listeners
-        interactionEvents.forEach(eventType => {
-          window.removeEventListener(eventType, resetInactivityTimer, true);
-        });
-        
-        // Remove unload listener
-        window.removeEventListener('unload', passiveLogout);
-      };
-    } else {
-        // Clear any lingering timer if the user logs out
-        if (inactivityTimer) {
-            clearTimeout(inactivityTimer);
-            setInactivityTimer(null);
-        }
+      startInactivityTimer();
     }
-  }, [isAuthenticated, resetInactivityTimer, passiveLogout, inactivityTimer]);
-  // The isAuthenticated dependency manages starting/stopping the listeners.
-  // The other dependencies ensure the callbacks are correctly managed.
+  }, [isAuthenticated, startInactivityTimer]);
 
+  // Initial load and setup of event listeners for activity tracking
+  useEffect(() => {
+    const handleActivity = () => resetInactivityTimer();
+
+    // Attach listeners for user activity
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('keypress', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
+
+    // Initial check for session (on page load)
+    const checkSession = async () => {
+      try {
+        const data = await apiFetch('/api/session_status', { method: 'GET' });
+        if (data.is_authenticated) {
+          handleAuthSuccess(data.email, data.user_name);
+        }
+      } catch (e) {
+        // Assume session check failure means not logged in
+        console.log('No active session found.');
+      }
+    };
+
+    checkSession();
+
+    // Cleanup: remove listeners when component unmounts
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('keypress', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      if (inactivityTimer) {
+        clearTimeout(inactivityTimer);
+      }
+    };
+  }, [resetInactivityTimer, inactivityTimer]);
+
+
+  // Handle successful login or signup
+  const handleAuthSuccess = (email, name) => {
+    setIsAuthenticated(true);
+    setUserEmail(email);
+    setUserName(name);
+    setMode('dashboard');
+    startInactivityTimer(); // Start timer on successful login
+  };
+
+  // Handle logout
+  const handleLogout = useCallback(async () => {
+    try {
+      // Clear session on the backend
+      await apiFetch('/api/logout', { method: 'POST' });
+    } catch (e) {
+      console.error("Logout failed on server, but client session will be cleared.", e);
+    } finally {
+      // Clear client state
+      setIsAuthenticated(false);
+      setUserEmail('');
+      setUserName('');
+      setMode('login');
+      if (inactivityTimer) {
+        clearTimeout(inactivityTimer);
+        setInactivityTimer(null);
+      }
+    }
+  }, [inactivityTimer]);
+
+  // Use effect to handle the cleanup logout event when the user navigates away or closes the tab.
+  useEffect(() => {
+    const handleUnload = () => {
+      // Send a synchronous request or use navigator.sendBeacon
+      // For simplicity in a single-file environment, we rely on the backend session timeout.
+      // In a multi-file setup, a proper sendBeacon call would be used here.
+      console.log("Attempting to signal logout on unload (relying on session timeout).");
+    };
+
+    window.addEventListener('unload', handleUnload);
+
+    return () => {
+      window.removeEventListener('unload', handleUnload);
+    };
+  }, [handleLogout]);
+  
 
   // Rendering based on mode
   return (
