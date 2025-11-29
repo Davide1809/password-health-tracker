@@ -1,12 +1,8 @@
-Flask==3.0.3
-Flask-CORS==4.0.1
-Flask-Login==0.6.3
-gunicorn==22.0.0
-pymongo==4.7.3
-werkzeug==3.0.3
-zxcvbn==4.4.28
+Flask
+Flask-Cors
+pymongo
+werkzeug
 cryptography
+zxcvbn
 python-dotenv
-dnspython
-pytest
-mongomock
+gunicorn # Used for production deployment

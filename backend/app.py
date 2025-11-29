@@ -4,31 +4,32 @@ import re
 from datetime import datetime, timedelta
 from functools import wraps
 from bson.objectid import ObjectId
+# NEW CRITICAL IMPORTS MOVED TO THE TOP
+import base64
+import hashlib
+# END NEW CRITICAL IMPORTS
 
 from flask import Flask, request, jsonify, session, make_response
 from flask_cors import CORS
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-from cryptography.fernet import Fernet, InvalidToken # Imported InvalidToken
+from cryptography.fernet import Fernet, InvalidToken
 from zxcvbn import zxcvbn 
-import base64
+
 
 # --- Configuration and Initialization ---
-# The application object MUST be defined before any configuration is applied.
 app = Flask(__name__)
 
-# Load environment variables (set during gcloud deploy)
+# Load environment variables
 SECRET_KEY_ENV = os.environ.get('SECRET_KEY')
 MONGO_URI = os.environ.get('MONGO_URI')
 
-# *** STARTUP SANITY CHECK LOGGING (NEW) ***
-# We check if the critical environment variables are loaded from the environment
+# *** STARTUP SANITY CHECK LOGGING ***
+# This will now confirm if the variables passed via gcloud were loaded correctly
 if SECRET_KEY_ENV and MONGO_URI:
-    # Print success message, only showing the length of the keys for security
     print(f"CRITICAL SANITY CHECK: Keys Found! SECRET_KEY length: {len(SECRET_KEY_ENV)}, MONGO_URI status: Found.")
 else:
-    # Print failure message clearly
-    print(f"CRITICAL SANITY CHECK: FAILED TO LOAD ENVIRONMENT VARIABLES.")
+    print("CRITICAL SANITY CHECK: FAILED TO LOAD ENVIRONMENT VARIABLES.")
     if not SECRET_KEY_ENV:
         print("FATAL ERROR: SECRET_KEY is missing from environment variables.")
     if not MONGO_URI:
@@ -45,7 +46,9 @@ app.config.update(
 )
 
 # Allow CORS only from the frontend URL, and allow credentials (cookies)
-CORS(app, supports_credentials=True, origins=['https://password-frontend-749522457256.web.app']) # Assuming this is your frontend URL
+# We assume the FRONTEND_URL environment variable is set in the gcloud command
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://password-frontend-749522457256.us-central1.run.app')
+CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
 # --- Database Setup (MongoDB) ---
 client = None
@@ -55,7 +58,12 @@ passwords_collection = None
 
 try:
     if MONGO_URI:
-        client = MongoClient(MONGO_URI)
+        # Check if the URI is for Atlas (to ensure we use the correct structure)
+        if 'mongodb+srv' in MONGO_URI:
+            client = MongoClient(MONGO_URI)
+        else:
+            client = MongoClient(MONGO_URI)
+            
         client.admin.command('ping') # Try to ping the database immediately
         db = client.password_health_tracker
         users_collection = db.users
@@ -64,24 +72,38 @@ try:
     else:
         print("WARNING: MONGO_URI not set. Database operations will fail.")
 except Exception as e:
+    # THIS CATCHES THE FATAL CRASH DURING STARTUP
     print(f"FATAL: Error connecting to MongoDB at startup: {e}")
-    # Collections remain None if connection fails
+    import traceback
+    print(traceback.format_exc()) # Print the full traceback for debugging
 
 # --- Encryption Setup ---
-# Derive encryption key from SECRET_KEY for Fernet. 
 def get_fernet_key(secret_key):
-    import hashlib
+    """
+    Derives a 32-byte Fernet key from the longer SECRET_KEY string using SHA256 hashing.
+    This ensures the key is always the correct length and format for Fernet.
+    """
+    # Hash the secret key string to get 32 bytes (256 bits)
     key_hash = hashlib.sha256(secret_key.encode()).digest()
+    # Base64 URL-safe encode the first 32 bytes of the hash
     return base64.urlsafe_b64encode(key_hash[:32])
 
 # Initialize Fernet instance
 FERNET_KEY = None
 fernet = None
-if app.config['SECRET_KEY']:
-    FERNET_KEY = get_fernet_key(app.config['SECRET_KEY'])
-    fernet = Fernet(FERNET_KEY)
+
+# We must check SECRET_KEY_ENV since it was loaded directly from os.environ
+if SECRET_KEY_ENV:
+    try:
+        FERNET_KEY = get_fernet_key(SECRET_KEY_ENV)
+        fernet = Fernet(FERNET_KEY)
+        print("Fernet encryption successfully initialized.")
+    except Exception as e:
+        print(f"FATAL: Failed to initialize Fernet encryption: {e}")
+        # If Fernet fails to initialize, the app is fundamentally broken.
+        fernet = None # Ensure it is explicitly None
 else:
-    # Use a dummy key if running without a real secret key
+    # Use a dummy key if running without a real secret key (shouldn't happen in Cloud Run)
     fernet = Fernet(b'default_fernets_key_for_testing_00') 
     print("WARNING: Using default Fernet key. Check SECRET_KEY environment variable.")
 
@@ -89,8 +111,7 @@ else:
 def encrypt_data(data):
     """Encrypts a string using Fernet."""
     if not fernet:
-        # This shouldn't happen if initialization above is correct, but safe check
-        raise RuntimeError("Fernet encryption key not initialized.")
+        raise RuntimeError("Fernet encryption key not initialized. Server misconfiguration.")
     return fernet.encrypt(data.encode()).decode()
 
 def decrypt_data(data):
@@ -99,7 +120,7 @@ def decrypt_data(data):
     Handles InvalidToken exception which often points to a key mismatch.
     """
     if not fernet:
-        raise RuntimeError("Fernet encryption key not initialized.")
+        raise RuntimeError("Fernet encryption key not initialized. Server misconfiguration.")
     
     if not isinstance(data, str) or not data:
          print(f"CRITICAL DECRYPTION ERROR: Input data is invalid or empty: {data}")
@@ -123,10 +144,10 @@ def require_auth(f):
         if 'user_id' not in session:
             return jsonify({'message': 'Unauthorized. Please log in.'}), 401
         
-        # Check if database collections are initialized
-        if passwords_collection is None or users_collection is None:
-            print("FATAL: Database connection failed. Denying request.")
-            return jsonify({'message': 'Server is currently experiencing database issues. Please try again later.'}), 503
+        # Check if database collections and encryption are initialized
+        if passwords_collection is None or users_collection is None or fernet is None:
+            print("FATAL: Server connection failed (DB or Encryption). Denying request.")
+            return jsonify({'message': 'Server is currently experiencing critical issues. Please try again later.'}), 503
             
         return f(*args, **kwargs)
     return decorated_function
@@ -151,6 +172,7 @@ def is_strong_password(password):
 
 @app.route('/', methods=['GET'])
 def health_check():
+    # Simple check, but doesn't check DB/Fernet health
     return jsonify({'status': 'ok'}), 200
 
 # --- DEBUGGING ROUTE ---
@@ -173,19 +195,18 @@ def session_status():
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    # If this fails, the DB connection failed during startup
-    if users_collection is None:
-        return jsonify({'message': 'Server is currently experiencing database issues.'}), 503
+    # Final check on critical services
+    if users_collection is None or fernet is None:
+        return jsonify({'message': 'Server is currently experiencing critical issues.'}), 503
         
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
-    user_name = data.get('user_name') 
+    user_name = data.get('user_name') # Now we expect user_name from the frontend
 
-    # If the request fails before here, the issue is ENV variables or network.
-    
     if not all([email, password, user_name]):
-        return jsonify({'message': 'Missing required fields.'}), 400
+        # This is the "Missing required fields" error the frontend was seeing
+        return jsonify({'message': 'Missing required fields. Please provide email, password, and your name.'}), 400
     
     # 1. Check password strength
     is_strong, feedback = is_strong_password(password)
@@ -216,8 +237,8 @@ def signup():
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    if users_collection is None:
-        return jsonify({'message': 'Server is currently experiencing database issues.'}), 503
+    if users_collection is None or fernet is None:
+        return jsonify({'message': 'Server is currently experiencing critical issues.'}), 503
 
     data = request.get_json()
     email = data.get('email')
@@ -368,31 +389,7 @@ def resource_not_found(e):
 
 
 if __name__ == '__main__':
-    # This block usually runs only in local development, but good practice to check if it's triggering
-    if not all(os.environ.get(k) for k in ['SECRET_KEY', 'MONGO_URI']):
-        print("WARNING: Running locally without required environment variables.")
-        # Only set defaults if running locally AND they are not defined in the environment
-        if not os.environ.get('SECRET_KEY'):
-            app.config['SECRET_KEY'] = 'default_secret_key_for_local_dev_12345678'
-        
-        if not os.environ.get('MONGO_URI'):
-            MONGO_URI = 'mongodb://localhost:27017/'
-        
-        # Re-check and set up Fernet key for local run if it wasn't set earlier due to missing env var
-        if FERNET_KEY is None:
-            new_fernet_key = get_fernet_key(app.config['SECRET_KEY'])
-            FERNET_KEY = new_fernet_key
-            fernet = Fernet(FERNET_KEY)
-
-        # Re-initialize DB connection for local run
-        if not os.environ.get('MONGO_URI') and MONGO_URI:
-            try:
-                client = MongoClient(MONGO_URI)
-                db = client.password_health_tracker
-                users_collection = db.users
-                passwords_collection = db.passwords
-                print("Connected to local MongoDB.")
-            except Exception as e:
-                print(f"Error connecting to local MongoDB: {e}")
-             
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    # Cloud Run provides the PORT environment variable.
+    port = int(os.environ.get('PORT', 8080))
+    # Note: Flask will automatically handle local vs Cloud Run startup environments
+    app.run(debug=True, host='0.0.0.0', port=port)
