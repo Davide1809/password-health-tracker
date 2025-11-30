@@ -76,8 +76,10 @@ def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
+    # Cloud Run sets PORT env var, default to 5000 for local dev
+    port = int(os.environ.get('PORT', os.environ.get('FLASK_PORT', 5000)))
     app.run(
-        host=os.environ.get('FLASK_HOST', '0.0.0.0'),
-        port=int(os.environ.get('FLASK_PORT', 5000)),
+        host='0.0.0.0',
+        port=port,
         debug=os.environ.get('FLASK_ENV', 'production') == 'development'
     )
