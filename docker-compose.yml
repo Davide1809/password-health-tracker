@@ -1,0 +1,54 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: password_tracker_mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - password-tracker-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: password_tracker_backend
+    environment:
+      FLASK_ENV: development
+      MONGO_URI: mongodb://admin:password@mongodb:27017/password_health?authSource=admin
+      JWT_SECRET_KEY: dev-secret-key
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HIBP_API_KEY: ${HIBP_API_KEY:-}
+    ports:
+      - "5001:5000"
+    depends_on:
+      - mongodb
+    networks:
+      - password-tracker-network
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: password_tracker_frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:5001/api
+    ports:
+      - "3001:80"
+    depends_on:
+      - backend
+    networks:
+      - password-tracker-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  password-tracker-network:
+    driver: bridge

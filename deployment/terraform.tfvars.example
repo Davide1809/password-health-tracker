@@ -1,0 +1,28 @@
+variable "gcp_project_id" {
+  description = "GCP Project ID"
+  type        = string
+}
+
+variable "gcp_region" {
+  description = "GCP Region"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "mongo_uri" {
+  description = "MongoDB Connection URI"
+  type        = string
+  sensitive   = true
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API Key"
+  type        = string
+  sensitive   = true
+}
+
+variable "jwt_secret_key" {
+  description = "JWT Secret Key"
+  type        = string
+  sensitive   = true
+}

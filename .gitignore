@@ -1,0 +1,88 @@
+# .gitignore for Password Health Tracker
+
+# Backend Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv
+venv/
+ENV/
+env/
+
+# Flask
+instance/
+.webassets-cache
+
+# Frontend Node
+frontend/node_modules/
+frontend/npm-debug.log
+frontend/yarn-error.log
+frontend/build/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Environment variables
+.env
+.env.local
+*.pem
+*.key
+*.pub
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# MongoDB
+data/
+mongodb_data/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
