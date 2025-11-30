@@ -1,6 +1,6 @@
 import React from 'react';
 import styled from 'styled-components';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 const Nav = styled.nav`
   background-color: rgba(0, 0, 0, 0.8);
@@ -18,6 +18,7 @@ const Logo = styled.h1`
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  cursor: pointer;
 `;
 
 const NavLinks = styled.div`
@@ -48,18 +49,54 @@ const NavLinks = styled.div`
       background-color: #667eea;
     }
   }
+
+  .auth-button {
+    background-color: #667eea;
+    padding: 0.5rem 1.2rem;
+    border-radius: 6px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+
+    &:hover {
+      background-color: #764ba2;
+    }
+  }
 `;
 
 function Navigation({ isAuthenticated, onLogout }) {
+  const navigate = useNavigate();
+
   return (
     <Nav>
-      <Logo>🔐 Password Health Tracker</Logo>
+      <Logo onClick={() => navigate(isAuthenticated ? '/' : '/about')}>
+        🔐 Password Health Tracker
+      </Logo>
       <NavLinks>
-        <Link to="/">Home</Link>
-        <Link to="/checker">Checker</Link>
-        <Link to="/about">About</Link>
         {isAuthenticated && (
-          <button onClick={onLogout}>Logout</button>
+          <>
+            <Link to="/">Dashboard</Link>
+            <Link to="/checker">Checker</Link>
+            <Link to="/about">About</Link>
+            <button onClick={() => {
+              onLogout();
+              navigate('/login');
+            }}>
+              Logout
+            </button>
+          </>
+        )}
+        {!isAuthenticated && (
+          <>
+            <Link to="/about">About</Link>
+            <button className="auth-button" onClick={() => navigate('/login')}>
+              Sign In
+            </button>
+            <button className="auth-button" onClick={() => navigate('/signup')}>
+              Sign Up
+            </button>
+          </>
         )}
       </NavLinks>
     </Nav>

@@ -27,6 +27,9 @@ app.config['AI_API_KEY'] = os.environ.get('OPENAI_API_KEY', '')
 CORS(app)
 mongo = PyMongo(app)
 
+# Inject mongo into auth_routes
+auth_routes.set_mongo(mongo)
+
 # Register blueprints with error handling
 try:
     app.register_blueprint(auth_routes.bp)

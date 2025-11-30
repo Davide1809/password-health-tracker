@@ -67,25 +67,110 @@ const Button = styled.button`
   }
 `;
 
+const ErrorMessage = styled.div`
+  margin-top: 2rem;
+  padding: 1rem;
+  background-color: #ffebee;
+  color: #c62828;
+  border-radius: 4px;
+  border-left: 4px solid #c62828;
+`;
+
+const SuccessMessage = styled.div`
+  margin-top: 2rem;
+  padding: 1rem;
+  background-color: #e8f5e9;
+  color: #2e7d32;
+  border-radius: 4px;
+  border-left: 4px solid #2e7d32;
+`;
+
+const StrengthBar = styled.div`
+  margin-top: 1rem;
+  height: 10px;
+  background-color: #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+
+  div {
+    height: 100%;
+    background: linear-gradient(90deg, #ff6b6b 0%, #ffd93d 50%, #6bcf7f 100%);
+    width: ${(props) => props.width}%;
+    transition: width 0.3s;
+  }
+`;
+
+const ResultsCard = styled.div`
+  margin-top: 2rem;
+  padding: 1.5rem;
+  background: #f5f5f5;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+
+  h2 {
+    margin-top: 0;
+    color: #333;
+  }
+
+  p {
+    margin: 0.75rem 0;
+    color: #555;
+  }
+
+  strong {
+    color: #333;
+  }
+`;
+
+const ScoreLabel = styled.span`
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  font-weight: bold;
+  margin-left: 0.5rem;
+
+  background-color: ${(props) => {
+    if (props.score >= 3) return '#4CAF50';
+    if (props.score >= 2) return '#FFC107';
+    return '#FF6B6B';
+  }};
+  color: white;
+`;
+
 function PasswordChecker() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
+    setResult(null);
+
+    if (!password) {
+      setError('Please enter a password');
+      setLoading(false);
+      return;
+    }
 
     try {
-      const response = await axios.post('http://localhost:5000/api/passwords/analyze', {
-        password: password
-      });
+      const token = localStorage.getItem('token');
+      const response = await axios.post(
+        `${process.env.REACT_APP_API_URL || 'http://localhost:5001'}/api/passwords/analyze`,
+        { password },
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      );
       setResult(response.data);
-    } catch (error) {
-      console.error('Error analyzing password:', error);
-      setResult({
-        error: 'Failed to analyze password. Please try again.'
-      });
+    } catch (err) {
+      const errorText = err.response?.data?.error || 'Failed to analyze password. Please try again.';
+      setError(errorText);
     } finally {
       setLoading(false);
     }
@@ -93,7 +178,7 @@ function PasswordChecker() {
 
   return (
     <Container>
-      <Title>Check Your Password Strength</Title>
+      <Title>🔍 Check Your Password Strength</Title>
       <Form onSubmit={handleSubmit}>
         <InputGroup>
           <Label htmlFor="password">Enter Password</Label>
@@ -103,13 +188,15 @@ function PasswordChecker() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Enter password to check"
-            required
+            disabled={loading}
           />
         </InputGroup>
-        <Button type="submit" disabled={loading}>
+        <Button type="submit" disabled={loading || !password}>
           {loading ? 'Analyzing...' : 'Analyze Password'}
         </Button>
       </Form>
+
+      {error && <ErrorMessage>{error}</ErrorMessage>}
 
       {result && (
         <ResultsDisplay result={result} />
@@ -123,44 +210,52 @@ function ResultsDisplay({ result }) {
     return <ErrorMessage>{result.error}</ErrorMessage>;
   }
 
-  const ErrorMessage = styled.div`
-    margin-top: 2rem;
-    padding: 1rem;
-    background-color: #ffebee;
-    color: #c62828;
-    border-radius: 4px;
-  `;
-
-  const StrengthBar = styled.div`
-    margin-top: 1rem;
-    height: 10px;
-    background-color: #ddd;
-    border-radius: 4px;
-    overflow: hidden;
-
-    div {
-      height: 100%;
-      background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcf7f);
-      width: ${(props) => props.width}%;
-      transition: width 0.3s;
-    }
-  `;
-
   return (
-    <div style={{ marginTop: '2rem' }}>
+    <ResultsCard>
       <h2>Analysis Results</h2>
+
       {result.strength && (
         <>
-          <p><strong>Strength:</strong> {result.strength.strength}</p>
-          <p><strong>Score:</strong> {result.strength.score}/4</p>
+          <p>
+            <strong>Strength:</strong>
+            <ScoreLabel score={result.strength.score}>
+              {result.strength.strength}
+            </ScoreLabel>
+          </p>
+          <p>
+            <strong>Score:</strong> {result.strength.score}/4
+          </p>
           <StrengthBar width={(result.strength.score / 4) * 100} />
-          <p><strong>Entropy:</strong> {result.strength.entropy} bits</p>
+
+          <p style={{ marginTop: '1rem' }}>
+            <strong>Entropy:</strong> {result.strength.entropy?.toFixed(2) || 'N/A'} bits
+          </p>
+
+          {result.strength.feedback && (
+            <p style={{ marginTop: '1rem', fontStyle: 'italic', color: '#666' }}>
+              <strong>Feedback:</strong> {result.strength.feedback}
+            </p>
+          )}
         </>
       )}
+
       {result.breached !== undefined && (
-        <p><strong>Breached:</strong> {result.breached ? 'Yes ⚠️' : 'No ✓'}</p>
+        <p style={{ marginTop: '1rem' }}>
+          <strong>Breach Status:</strong> {result.breached ? '⚠️ Found in data breaches' : '✓ Not found in known breaches'}
+        </p>
       )}
-    </div>
+
+      {result.recommendations && Array.isArray(result.recommendations) && (
+        <div style={{ marginTop: '1rem' }}>
+          <strong>Recommendations:</strong>
+          <ul>
+            {result.recommendations.map((rec, idx) => (
+              <li key={idx}>{rec}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </ResultsCard>
   );
 }
 
