@@ -28,7 +28,24 @@ function App() {
     const token = localStorage.getItem('token');
     setAuthToken(token);
     setIsLoading(false);
+
+    // Listen for storage changes (logout in other tabs, etc.)
+    const handleStorageChange = () => {
+      const newToken = localStorage.getItem('token');
+      setAuthToken(newToken);
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, []);
+
+  const handleLogin = (token) => {
+    localStorage.setItem('token', token);
+    setAuthToken(token);
+  };
 
   const handleLogout = () => {
     setAuthToken(null);
@@ -45,14 +62,20 @@ function App() {
       <Router>
         {authToken && <Navigation isAuthenticated={!!authToken} onLogout={handleLogout} />}
         <Routes>
-          <Route path="/login" element={<Login />} />
+          <Route path="/login" element={<Login onLoginSuccess={handleLogin} />} />
           <Route path="/signup" element={<SignUp />} />
           <Route
-            path="/"
+            path="/dashboard"
             element={
               <ProtectedRoute isAuthenticated={!!authToken}>
                 <Dashboard />
               </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/"
+            element={
+              authToken ? <Navigate to="/dashboard" /> : <Navigate to="/login" />
             }
           />
           <Route

@@ -117,7 +117,7 @@ const SignUpLink = styled.p`
   }
 `;
 
-const Login = () => {
+const Login = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
     email: '',
@@ -158,6 +158,11 @@ const Login = () => {
       // Store token in localStorage
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
+
+      // Notify parent component
+      if (onLoginSuccess) {
+        onLoginSuccess(response.data.token);
+      }
 
       // Redirect to dashboard
       navigate('/dashboard');

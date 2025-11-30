@@ -68,21 +68,23 @@ const NavLinks = styled.div`
 function Navigation({ isAuthenticated, onLogout }) {
   const navigate = useNavigate();
 
+  const handleLogout = () => {
+    onLogout();
+    navigate('/login', { replace: true });
+  };
+
   return (
     <Nav>
-      <Logo onClick={() => navigate(isAuthenticated ? '/' : '/about')}>
+      <Logo onClick={() => navigate(isAuthenticated ? '/dashboard' : '/about')}>
         🔐 Password Health Tracker
       </Logo>
       <NavLinks>
         {isAuthenticated && (
           <>
-            <Link to="/">Dashboard</Link>
+            <Link to="/dashboard">Dashboard</Link>
             <Link to="/checker">Checker</Link>
             <Link to="/about">About</Link>
-            <button onClick={() => {
-              onLogout();
-              navigate('/login');
-            }}>
+            <button onClick={handleLogout}>
               Logout
             </button>
           </>
