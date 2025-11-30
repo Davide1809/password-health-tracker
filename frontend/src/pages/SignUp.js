@@ -168,7 +168,7 @@ const SignUp = () => {
     uppercase: /[A-Z]/.test(formData.password),
     lowercase: /[a-z]/.test(formData.password),
     number: /\d/.test(formData.password),
-    special: /[!@#$%^&*()_+\-=\[\]{};:'"<>?/\\|`~]/.test(formData.password)
+    special: /[!@#$%^&*()_+\-=[\]{};:'"<>?/\\|`~]/.test(formData.password)
   };
 
   const allRequirementsMet = Object.values(passwordRequirements).every(req => req);
