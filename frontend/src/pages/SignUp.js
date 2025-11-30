@@ -225,7 +225,7 @@ const SignUp = () => {
     setMessage({ type: '', text: '' });
 
     try {
-      const response = await axios.post(
+      await axios.post(
         `${process.env.REACT_APP_API_URL || 'http://localhost:5001'}/api/auth/register`,
         {
           email: formData.email,
@@ -336,7 +336,7 @@ const SignUp = () => {
 
         <LoginLink>
           Already have an account?{' '}
-          <a onClick={() => navigate('/login')}>Sign In</a>
+          <a href="#login" onClick={(e) => { e.preventDefault(); navigate('/login'); }}>Sign In</a>
         </LoginLink>
       </FormContainer>
     </Container>

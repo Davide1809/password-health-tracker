@@ -219,7 +219,7 @@ const Login = ({ onLoginSuccess }) => {
 
         <SignUpLink>
           Don't have an account?{' '}
-          <a onClick={() => navigate('/signup')}>Create Account</a>
+          <a href="#signup" onClick={(e) => { e.preventDefault(); navigate('/signup'); }}>Create Account</a>
         </SignUpLink>
       </FormContainer>
     </Container>

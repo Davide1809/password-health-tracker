@@ -76,14 +76,7 @@ const ErrorMessage = styled.div`
   border-left: 4px solid #c62828;
 `;
 
-const SuccessMessage = styled.div`
-  margin-top: 2rem;
-  padding: 1rem;
-  background-color: #e8f5e9;
-  color: #2e7d32;
-  border-radius: 4px;
-  border-left: 4px solid #2e7d32;
-`;
+
 
 const StrengthBar = styled.div`
   margin-top: 1rem;
