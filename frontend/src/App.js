@@ -8,6 +8,7 @@ import Results from './pages/Results';
 import About from './pages/About';
 import Login from './pages/Login';
 import SignUp from './pages/SignUp';
+import { getRuntimeConfig } from './config';
 
 const AppContainer = styled.div`
   min-height: 100vh;
@@ -22,8 +23,20 @@ const ProtectedRoute = ({ isAuthenticated, children }) => {
 function App() {
   const [authToken, setAuthToken] = useState(localStorage.getItem('token'));
   const [isLoading, setIsLoading] = useState(true);
+  const [configLoaded, setConfigLoaded] = useState(false);
 
   useEffect(() => {
+    // Preload runtime config before rendering anything
+    getRuntimeConfig().then(() => {
+      setConfigLoaded(true);
+    }).catch(() => {
+      setConfigLoaded(true); // Continue even if config fails
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!configLoaded) return;
+
     // Check if token exists and is valid
     const token = localStorage.getItem('token');
     setAuthToken(token);
@@ -40,7 +53,7 @@ function App() {
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, []);
+  }, [configLoaded]);
 
   const handleLogin = (token) => {
     localStorage.setItem('token', token);
@@ -53,7 +66,7 @@ function App() {
     localStorage.removeItem('user');
   };
 
-  if (isLoading) {
+  if (isLoading || !configLoaded) {
     return <AppContainer>Loading...</AppContainer>;
   }
 
