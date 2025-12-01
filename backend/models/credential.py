@@ -38,15 +38,19 @@ class Credential:
         """Get encryption cipher using environment key"""
         encryption_key = os.environ.get('CREDENTIAL_ENCRYPTION_KEY')
         if not encryption_key:
-            # Generate a default key for development (NOT SECURE FOR PRODUCTION)
-            encryption_key = Fernet.generate_key().decode()
-            os.environ['CREDENTIAL_ENCRYPTION_KEY'] = encryption_key
+            raise ValueError(
+                'CREDENTIAL_ENCRYPTION_KEY environment variable is not set. '
+                'Ensure it is initialized in app startup.'
+            )
         
         # Ensure key is bytes
         if isinstance(encryption_key, str):
             encryption_key = encryption_key.encode()
         
-        return Fernet(encryption_key)
+        try:
+            return Fernet(encryption_key)
+        except Exception as e:
+            raise ValueError(f'Invalid encryption key format: {str(e)}')
     
     @staticmethod
     def encrypt_password(password: str) -> str:

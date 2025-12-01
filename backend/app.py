@@ -23,6 +23,15 @@ app.config['MONGO_URI'] = os.environ.get('MONGO_URI', 'mongodb://localhost:27017
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['AI_API_KEY'] = os.environ.get('OPENAI_API_KEY', '')
 
+# Ensure credential encryption key is set (required for password encryption)
+if not os.environ.get('CREDENTIAL_ENCRYPTION_KEY'):
+    from cryptography.fernet import Fernet
+    # Generate a key for development if not provided
+    generated_key = Fernet.generate_key().decode()
+    os.environ['CREDENTIAL_ENCRYPTION_KEY'] = generated_key
+    logger.warning('CREDENTIAL_ENCRYPTION_KEY not set. Generated a temporary development key. '
+                   'For production, set CREDENTIAL_ENCRYPTION_KEY environment variable.')
+
 # Initialize extensions
 CORS(app)
 mongo = PyMongo(app)
