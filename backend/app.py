@@ -20,6 +20,7 @@ app = Flask(__name__)
 
 # Configuration
 app.config['MONGO_URI'] = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/password_health')
+app.config['MONGO_CONNECT'] = False  # Lazy connect - don't connect on initialization
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['AI_API_KEY'] = os.environ.get('OPENAI_API_KEY', '')
 
