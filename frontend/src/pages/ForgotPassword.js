@@ -139,6 +139,7 @@ function ForgotPassword() {
   const [step, setStep] = useState('email'); // 'email', 'security', or 'reset'
   const [email, setEmail] = useState('');
   const [securityAnswer, setSecurityAnswer] = useState('');
+  const [securityQuestion, setSecurityQuestion] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState({});
@@ -171,13 +172,21 @@ function ForgotPassword() {
     setLoading(true);
     try {
       const apiBase = await getApiBase();
-      // First, verify the email exists and get the question
+      // First, verify the email exists
       await axios.post(
         `${apiBase}/api/auth/forgot-password`,
         { email }
       );
 
-      // The backend will send the question in the response or we move to security step
+      // Fetch the user's security question
+      const questionResponse = await axios.post(
+        `${apiBase}/api/security-questions/get-question-for-email`,
+        { email }
+      );
+
+      // Store the question for display
+      setSecurityQuestion(questionResponse.data.question);
+
       setMessage({
         type: 'success',
         text: 'Email verified! Now answer your security question.'
@@ -330,7 +339,7 @@ function ForgotPassword() {
             <FormGroup>
               <Label>Please answer your security question:</Label>
               <QuestionDisplay>
-                🔐 Answer the security question you provided during account signup
+                🔐 {securityQuestion || 'Answer the security question you provided during account signup'}
               </QuestionDisplay>
               <Label htmlFor="securityAnswer">Your Answer</Label>
               <Input

@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 bp = Blueprint('security_questions', __name__, url_prefix='/api/security-questions')
 
+# Get MongoDB instance (will be injected from app)
+mongo = None
+
+def set_mongo(mongo_instance):
+    """Set the MongoDB instance for routes"""
+    global mongo
+    mongo = mongo_instance
+
 
 @bp.route('/questions', methods=['GET'])
 def get_questions():
@@ -31,6 +39,65 @@ def get_questions():
     except Exception as e:
         logger.error(f'Failed to fetch security questions: {str(e)}')
         return jsonify({'error': 'Failed to fetch questions'}), 500
+
+
+@bp.route('/get-question-for-email', methods=['POST'])
+def get_question_for_email():
+    """
+    Get the security question for a specific email
+    Used during password recovery to show user their question
+    
+    Request body:
+    {
+        "email": "user@example.com"
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        email = data.get('email', '').strip().lower()
+        
+        if not email:
+            return jsonify({'error': 'Email is required'}), 400
+        
+        # Find user
+        user_data = mongo.db.users.find_one({'email': email})
+        
+        if not user_data:
+            # Don't reveal if email exists (security best practice)
+            logger.warning(f'Get question failed: email {email} not found')
+            return jsonify({
+                'error': 'Email not found'
+            }), 404
+        
+        # Get the question
+        question_id = user_data.get('security_question_id')
+        if not question_id:
+            logger.warning(f'Get question failed: user {email} has no security question set')
+            return jsonify({
+                'error': 'User account not properly configured'
+            }), 400
+        
+        question = get_question_by_id(question_id)
+        if not question:
+            logger.error(f'Get question failed: invalid question_id {question_id} for user {email}')
+            return jsonify({
+                'error': 'Question not found'
+            }), 400
+        
+        logger.info(f'✅ Security question retrieved for {email}')
+        
+        return jsonify({
+            'question': question['question'],
+            'question_id': question_id
+        }), 200
+        
+    except Exception as e:
+        logger.error(f'Failed to get security question: {str(e)}', exc_info=True)
+        return jsonify({'error': 'Failed to retrieve question'}), 500
 
 
 @bp.route('/validate-answer', methods=['POST'])
