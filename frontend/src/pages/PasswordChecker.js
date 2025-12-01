@@ -638,28 +638,31 @@ function ResultsDisplay({ result, onGeneratePassword, onGetAiSuggestions, sugges
               <li key={idx}>{rec}</li>
             ))}
           </RecommendationsList>
-          
-          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-            <GenerateButton onClick={onGeneratePassword} disabled={suggestionsRemaining <= 0 || generatingPassword}>
-              {generatingPassword ? '⏳ Generating...' : `🔄 Generate Strong Password (${suggestionsRemaining} left)`}
-            </GenerateButton>
-            <AIButton onClick={onGetAiSuggestions} disabled={suggestionsRemaining <= 0 || loadingAiSuggestions}>
-              {loadingAiSuggestions ? '⏳ Getting Suggestions...' : `🤖 Get AI Suggestions (${suggestionsRemaining} left)`}
-            </AIButton>
-          </div>
-
-          <SecurityRulesBox>
-            <h4>🔐 Security Requirements Met</h4>
-            <ul>
-              <li>✓ Minimum 12 characters</li>
-              <li>✓ Uppercase letters (A-Z)</li>
-              <li>✓ Lowercase letters (a-z)</li>
-              <li>✓ Numbers (0-9)</li>
-              <li>✓ Special characters (!@#$%...)</li>
-            </ul>
-          </SecurityRulesBox>
         </div>
       )}
+
+      {/* Password Generation Buttons - Always show after analysis */}
+      <div style={{ marginTop: '1.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <GenerateButton onClick={onGeneratePassword} disabled={suggestionsRemaining <= 0 || generatingPassword}>
+            {generatingPassword ? '⏳ Generating...' : `🔄 Generate Strong Password (${suggestionsRemaining} left)`}
+          </GenerateButton>
+          <AIButton onClick={onGetAiSuggestions} disabled={suggestionsRemaining <= 0 || loadingAiSuggestions}>
+            {loadingAiSuggestions ? '⏳ Getting Suggestions...' : `🤖 Get AI Suggestions (${suggestionsRemaining} left)`}
+          </AIButton>
+        </div>
+
+        <SecurityRulesBox>
+          <h4>🔐 Security Requirements Met</h4>
+          <ul>
+            <li>✓ Minimum 12 characters</li>
+            <li>✓ Uppercase letters (A-Z)</li>
+            <li>✓ Lowercase letters (a-z)</li>
+            <li>✓ Numbers (0-9)</li>
+            <li>✓ Special characters (!@#$%...)</li>
+          </ul>
+        </SecurityRulesBox>
+      </div>
     </ResultsCard>
   );
 }
