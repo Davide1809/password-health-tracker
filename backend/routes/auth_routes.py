@@ -340,3 +340,55 @@ def verify_token():
         return jsonify({'valid': False, 'error': 'Invalid token'}), 401
     except Exception as e:
         return jsonify({'valid': False, 'error': str(e)}), 500
+
+
+@bp.route('/delete-account', methods=['POST'])
+def delete_account():
+    """Delete user account and all associated credentials"""
+    try:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Get token from header
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        
+        if not token:
+            return jsonify({'error': 'Unauthorized - missing token'}), 401
+        
+        # Verify token
+        try:
+            jwt_secret = os.environ.get('JWT_SECRET_KEY', 'dev-secret-key')
+            payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+            user_id = payload.get('user_id')
+            email = payload.get('email')
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+        
+        if not user_id:
+            return jsonify({'error': 'Invalid token - no user ID'}), 401
+        
+        # Delete user
+        user_result = mongo.db.users.delete_one({'_id': ObjectId(user_id), 'email': email})
+        
+        if user_result.deleted_count == 0:
+            logger.warning(f'🗑️ Delete account failed: user not found for ID {user_id}')
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Delete all associated credentials
+        credentials_result = mongo.db.credentials.delete_many({'user_id': user_id})
+        
+        logger.info(f'✅ Account deleted successfully for {email}. Deleted {credentials_result.deleted_count} credentials.')
+        
+        return jsonify({
+            'message': 'Account deleted successfully',
+            'email': email,
+            'credentials_deleted': credentials_result.deleted_count
+        }), 200
+    
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f'🗑️ Delete account error: {str(e)}', exc_info=True)
+        return jsonify({'error': f'Account deletion failed: {str(e)}'}), 500
