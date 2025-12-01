@@ -53,6 +53,8 @@ def generate_password(current_user):
         import logging
         logger = logging.getLogger(__name__)
         
+        logger.info(f'🔄 Generate password request started')
+        
         data = request.get_json() if request.get_json() else {}
         
         # Get session ID for tracking attempts
@@ -63,11 +65,13 @@ def generate_password(current_user):
             suggestion_attempts[client_id] = 0
         
         suggestion_attempts[client_id] += 1
+        current_attempt = suggestion_attempts[client_id]
         
-        logger.info(f'🔄 Password generation request - attempt {suggestion_attempts[client_id]} for client {client_id}')
+        logger.info(f'🔄 Attempt {current_attempt}/3 for client')
         
         # Limit to 3 suggestions per session
-        if suggestion_attempts[client_id] > 3:
+        if current_attempt > 3:
+            logger.warning(f'🔄 Attempt limit exceeded: {current_attempt}')
             return jsonify({
                 'error': 'Maximum suggestions reached (3 per session)',
                 'message': 'Please refresh to reset suggestion limit'
@@ -78,33 +82,49 @@ def generate_password(current_user):
         use_special = data.get('use_special', True)
         use_numbers = data.get('use_numbers', True)
         
-        logger.info(f'🔄 Generating password: length={length}, special={use_special}, numbers={use_numbers}')
+        logger.info(f'🔄 Parameters: length={length}, special={use_special}, numbers={use_numbers}')
         
         # Validate length (12-32)
         if length < 12 or length > 32:
             length = 16
         
-        # Generate strong password meeting security rules
-        new_password = generate_strong_password(
-            length=length,
-            use_special=use_special,
-            use_numbers=use_numbers
-        )
+        try:
+            logger.info(f'🔄 Calling generate_strong_password...')
+            # Generate strong password meeting security rules
+            new_password = generate_strong_password(
+                length=length,
+                use_special=use_special,
+                use_numbers=use_numbers
+            )
+            logger.info(f'🔄 Password generated: {len(new_password)} chars')
+        except Exception as e:
+            logger.error(f'🔄 Error in generate_strong_password: {str(e)}', exc_info=True)
+            raise
         
-        logger.info(f'🔄 Password generated, analyzing strength...')
+        try:
+            logger.info(f'🔄 Validating password...')
+            # Validate password meets security rules
+            is_valid, validation_errors = validate_password_meets_security_rules(
+                new_password,
+                min_length=12,
+                require_special=use_special,
+                require_numbers=use_numbers
+            )
+            logger.info(f'🔄 Validation result: {is_valid}')
+        except Exception as e:
+            logger.error(f'🔄 Error in validate_password_meets_security_rules: {str(e)}', exc_info=True)
+            raise
         
-        # Validate password meets security rules
-        is_valid, validation_errors = validate_password_meets_security_rules(
-            new_password,
-            min_length=12,
-            require_special=use_special,
-            require_numbers=use_numbers
-        )
+        try:
+            logger.info(f'🔄 Analyzing password strength...')
+            # Analyze generated password
+            analysis = analyze_password_strength(new_password)
+            logger.info(f'✅ Password analysis complete - score={analysis["score"]}')
+        except Exception as e:
+            logger.error(f'🔄 Error in analyze_password_strength: {str(e)}', exc_info=True)
+            raise
         
-        # Analyze generated password
-        analysis = analyze_password_strength(new_password)
-        
-        logger.info(f'✅ Password generation successful - valid={is_valid}, score={analysis["score"]}')
+        logger.info(f'✅ Password generation successful')
         
         return jsonify({
             'generated_password': new_password,
@@ -113,14 +133,16 @@ def generate_password(current_user):
             'entropy': analysis['entropy'],
             'meets_security_rules': is_valid,
             'validation_errors': validation_errors if not is_valid else [],
-            'attempts_remaining': 3 - suggestion_attempts[client_id],
+            'attempts_remaining': 3 - current_attempt,
             'note': 'This password is displayed but not saved. Copy it to your preferred location.'
         }), 200
     
     except Exception as e:
         import logging
+        import traceback
         logger = logging.getLogger(__name__)
-        logger.error(f'🔄 Password generation error: {str(e)}', exc_info=True)
+        logger.error(f'🔄 Password generation error: {str(e)}')
+        logger.error(f'Stack trace: {traceback.format_exc()}')
         return jsonify({'error': f'Failed to generate password: {str(e)}'}), 500
 
 @bp.route('/ai-suggestions', methods=['POST'])
