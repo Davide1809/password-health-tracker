@@ -224,18 +224,3 @@ def verify_strength():
     
     except Exception as e:
         return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
-
-@bp.route('/reset-suggestions', methods=['POST'])
-def reset_suggestions():
-    """Reset suggestion counter for new session"""
-    try:
-        client_id = request.remote_addr + str(request.headers.get('User-Agent', ''))
-        suggestion_attempts[client_id] = 0
-        
-        return jsonify({
-            'message': 'Suggestion counter reset',
-            'attempts_remaining': 3
-        }), 200
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
