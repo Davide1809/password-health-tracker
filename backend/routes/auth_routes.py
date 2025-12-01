@@ -326,7 +326,9 @@ def reset_password():
             jwt_secret = os.environ.get('JWT_SECRET_KEY', 'dev-secret-key')
             payload = jwt.decode(reset_token, jwt_secret, algorithms=['HS256'])
             
-            if payload.get('type') != 'password_reset':
+            # Accept both password_reset (from email) and security_verified (from security question) tokens
+            token_type = payload.get('type')
+            if token_type not in ['password_reset', 'security_verified']:
                 return jsonify({'error': 'Invalid reset token'}), 401
             
         except jwt.ExpiredSignatureError:
