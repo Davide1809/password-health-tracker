@@ -426,6 +426,7 @@ function PasswordChecker() {
 
     setGeneratingPassword(true);
     try {
+      const token = localStorage.getItem('token');
       const apiBase = await getApiBase();
       const response = await axios.post(
         `${apiBase}/api/ai/generate`,
@@ -433,6 +434,11 @@ function PasswordChecker() {
           length: 16,
           use_special: true,
           use_numbers: true
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
         }
       );
       setGeneratedPassword(response.data.generated_password);
@@ -454,12 +460,18 @@ function PasswordChecker() {
 
     setLoadingAiSuggestions(true);
     try {
+      const token = localStorage.getItem('token');
       const apiBase = await getApiBase();
       const response = await axios.post(
         `${apiBase}/api/ai/ai-suggestions`,
         {
           count: 3,
           length: 16
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
         }
       );
       setAiSuggestions(response.data.suggestions || []);
