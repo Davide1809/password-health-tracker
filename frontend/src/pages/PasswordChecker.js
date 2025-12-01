@@ -132,17 +132,6 @@ const ScoreLabel = styled.span`
   color: white;
 `;
 
-const ButtonGroup = styled.div`
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 1rem;
-`;
-
-const SecondaryButton = styled(Button)`
-  background: #764ba2;
-  flex: 1;
-`;
-
 const GenerateButton = styled(Button)`
   background: #06a77d;
   flex: 1;
