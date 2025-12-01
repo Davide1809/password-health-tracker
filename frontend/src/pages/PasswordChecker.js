@@ -143,15 +143,6 @@ const SecondaryButton = styled(Button)`
   flex: 1;
 `;
 
-const BreachWarning = styled.div`
-  margin-top: 1rem;
-  padding: 1rem;
-  background-color: #fff3cd;
-  color: #856404;
-  border-radius: 4px;
-  border-left: 4px solid #ffc107;
-`;
-
 const BreachAlert = styled.div`
   margin-top: 1rem;
   padding: 1rem;
