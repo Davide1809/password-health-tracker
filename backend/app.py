@@ -11,6 +11,7 @@ import logging
 
 # Import route blueprints
 from routes import auth_routes, password_routes, breach_routes, ai_routes, credentials_routes
+from utils import email_sender
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +35,9 @@ if not os.environ.get('CREDENTIAL_ENCRYPTION_KEY'):
 
 # Initialize extensions
 CORS(app)
+
+# Initialize Flask-Mail for email sending
+email_sender.init_mail(app)
 
 # Initialize MongoDB with connection pooling
 try:

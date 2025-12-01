@@ -9,6 +9,7 @@ import re
 from bson.objectid import ObjectId
 from flask_pymongo import PyMongo
 from models.user import User
+from utils.email_sender import send_password_reset_email
 
 bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -234,7 +235,7 @@ def forgot_password():
             algorithm='HS256'
         )
         
-        # Store reset token in database (optional for validation)
+        # Store reset token in database (for validation on reset)
         mongo.db.password_resets.insert_one({
             'email': email,
             'token': reset_token,
@@ -242,16 +243,29 @@ def forgot_password():
             'expires_at': datetime.utcnow() + timedelta(hours=1)
         })
         
-        # TODO: Send email with reset link
-        # For now, return token (in production, send via email)
-        reset_link = f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/reset-password?token={reset_token}"
+        # Send password reset email
+        import logging
+        logger = logging.getLogger(__name__)
         
-        return jsonify({
-            'message': 'Password reset link sent to email',
-            'reset_link': reset_link  # TODO: Remove in production, only send via email
-        }), 200
+        email_sent = send_password_reset_email(email, reset_token)
+        
+        if email_sent:
+            logger.info(f'✉️ Password reset email sent to {email}')
+            return jsonify({
+                'message': 'Password reset link sent to email'
+            }), 200
+        else:
+            logger.warning(f'✉️ Failed to send password reset email to {email}')
+            # Still return success to not reveal email existence
+            # In production, you might want to log this and alert admins
+            return jsonify({
+                'message': 'If email exists in system, password reset link will be sent'
+            }), 200
     
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f'Password reset request failed: {str(e)}', exc_info=True)
         return jsonify({'error': f'Password reset request failed: {str(e)}'}), 500
 
 
