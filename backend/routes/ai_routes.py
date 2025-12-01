@@ -1,7 +1,7 @@
 """
 AI-powered password recommendation routes
 """
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify
 from utils.ai_recommender import (
     generate_recommendations, 
     generate_strong_password,
@@ -13,9 +13,6 @@ from utils.auth_helper import token_required
 import os
 
 bp = Blueprint('ai', __name__, url_prefix='/api/ai')
-
-# Track password suggestion attempts per session
-suggestion_attempts = {}
 
 @bp.route('/recommendations', methods=['POST'])
 def get_recommendations():
@@ -132,28 +129,9 @@ def get_ai_suggestions(current_user):
         import logging
         logger = logging.getLogger(__name__)
         
+        logger.info(f'🤖 AI suggestions request')
+        
         data = request.get_json() if request.get_json() else {}
-        
-        # Get user ID for tracking attempts (per-user, not per-session)
-        user_id = str(current_user.get('user_id', 'anonymous'))
-        session_key = f"{user_id}_suggestions"
-        
-        # Track attempts per user per session
-        if session_key not in suggestion_attempts:
-            suggestion_attempts[session_key] = 0
-        
-        suggestion_attempts[session_key] += 1
-        current_attempt = suggestion_attempts[session_key]
-        
-        logger.info(f'🤖 AI suggestions request - attempt {current_attempt} for user {user_id}')
-        
-        # Limit to 3 suggestion requests per session
-        if current_attempt > 3:
-            logger.warning(f'🤖 Attempt limit exceeded: {current_attempt}')
-            return jsonify({
-                'error': 'Maximum suggestions reached (3 per session)',
-                'message': 'Refresh the page to reset your attempts'
-            }), 429
         
         # Get parameters
         count = data.get('count', 3)
@@ -192,7 +170,6 @@ def get_ai_suggestions(current_user):
         return jsonify({
             'suggestions': analyzed_suggestions,
             'count': len(analyzed_suggestions),
-            'attempts_remaining': 3 - current_attempt,
             'note': 'Passwords are AI-generated and not saved. Copy to your password manager or save securely.',
             'security_requirements': {
                 'minimum_length': 12,
