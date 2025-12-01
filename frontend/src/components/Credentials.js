@@ -170,10 +170,29 @@ const ShowButton = styled.button`
   }
 `;
 
+const CopyButton = styled.button`
+  background: none;
+  border: none;
+  color: #667eea;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0;
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
 const ActionButtons = styled.div`
   display: flex;
   gap: 0.5rem;
   margin-top: 1rem;
+`;
+
+const EditButton = styled(Button)`
+  background: #764ba2;
 `;
 
 const DeleteButton = styled(Button)`
@@ -209,6 +228,8 @@ function Credentials() {
     notes: ''
   });
   const [showPasswords, setShowPasswords] = useState({});
+  const [editingId, setEditingId] = useState(null);
+  const [editFormData, setEditFormData] = useState({});
   const [message, setMessage] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
   const token = localStorage.getItem('token');
@@ -301,6 +322,61 @@ function Credentials() {
     }));
   };
 
+  const copyToClipboard = (text, type) => {
+    navigator.clipboard.writeText(text);
+    setMessage({ type: 'success', text: `${type} copied to clipboard!` });
+    setTimeout(() => setMessage({ type: '', text: '' }), 2000);
+  };
+
+  const startEdit = (credential) => {
+    setEditingId(credential.id);
+    setEditFormData({
+      website_name: credential.website_name,
+      username: credential.username,
+      password: credential.password,
+      notes: credential.notes
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditFormData({});
+  };
+
+  const handleEditChange = (e) => {
+    const { name, value } = e.target;
+    setEditFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const saveEdit = async (credentialId) => {
+    if (!editFormData.website_name || !editFormData.username || !editFormData.password) {
+      setMessage({ type: 'error', text: 'All fields are required' });
+      return;
+    }
+
+    try {
+      const apiBase = await getApiBase();
+      await axios.put(
+        `${apiBase}/api/credentials/${credentialId}`,
+        editFormData,
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+
+      setMessage({ type: 'success', text: 'Credential updated successfully!' });
+      setEditingId(null);
+      setEditFormData({});
+      fetchCredentials();
+    } catch (error) {
+      const errorText = error.response?.data?.error || 'Failed to update credential';
+      setMessage({ type: 'error', text: errorText });
+    }
+  };
+
   return (
     <CredentialsContainer>
       <Title>🔐 Saved Credentials</Title>
@@ -386,41 +462,108 @@ function Credentials() {
         <CredentialsList>
           {credentials.map(credential => (
             <CredentialCard key={credential.id}>
-              <CredentialHeader>
-                <WebsiteName>{credential.website_name}</WebsiteName>
-              </CredentialHeader>
+              {editingId === credential.id ? (
+                // Edit Mode
+                <div>
+                  <h3 style={{ marginTop: 0, color: '#333' }}>Edit Credential</h3>
+                  <FormGrid>
+                    <FormGroup>
+                      <Label>Website Name</Label>
+                      <Input
+                        name="website_name"
+                        type="text"
+                        value={editFormData.website_name}
+                        onChange={handleEditChange}
+                      />
+                    </FormGroup>
+                    <FormGroup>
+                      <Label>Username/Email</Label>
+                      <Input
+                        name="username"
+                        type="text"
+                        value={editFormData.username}
+                        onChange={handleEditChange}
+                      />
+                    </FormGroup>
+                    <FormGroup>
+                      <Label>Password</Label>
+                      <Input
+                        name="password"
+                        type="password"
+                        value={editFormData.password}
+                        onChange={handleEditChange}
+                      />
+                    </FormGroup>
+                  </FormGrid>
+                  <FormGroup>
+                    <Label>Notes</Label>
+                    <TextArea
+                      name="notes"
+                      value={editFormData.notes}
+                      onChange={handleEditChange}
+                      rows="3"
+                    />
+                  </FormGroup>
+                  <ActionButtons>
+                    <Button onClick={() => saveEdit(credential.id)}>
+                      Save Changes
+                    </Button>
+                    <DeleteButton onClick={cancelEdit}>
+                      Cancel
+                    </DeleteButton>
+                  </ActionButtons>
+                </div>
+              ) : (
+                // Display Mode
+                <>
+                  <CredentialHeader>
+                    <WebsiteName>{credential.website_name}</WebsiteName>
+                  </CredentialHeader>
 
-              <CredentialField>
-                <FieldLabel>Username/Email:</FieldLabel>
-                <FieldValue>{credential.username}</FieldValue>
-              </CredentialField>
+                  <CredentialField>
+                    <FieldLabel>Username/Email:</FieldLabel>
+                    <FieldValue>{credential.username}</FieldValue>
+                    <CopyButton onClick={() => copyToClipboard(credential.username, 'Username')}>
+                      📋 Copy
+                    </CopyButton>
+                  </CredentialField>
 
-              <CredentialField>
-                <FieldLabel>Password:</FieldLabel>
-                <PasswordField>
-                  {showPasswords[credential.id] ? (
-                    <FieldValue>{credential.password}</FieldValue>
-                  ) : (
-                    <HiddenPassword>••••••••</HiddenPassword>
+                  <CredentialField>
+                    <FieldLabel>Password:</FieldLabel>
+                    <PasswordField>
+                      {showPasswords[credential.id] ? (
+                        <FieldValue>{credential.password}</FieldValue>
+                      ) : (
+                        <HiddenPassword>••••••••</HiddenPassword>
+                      )}
+                      <ShowButton onClick={() => togglePasswordVisibility(credential.id)}>
+                        {showPasswords[credential.id] ? 'Hide' : 'Show'}
+                      </ShowButton>
+                      {showPasswords[credential.id] && (
+                        <CopyButton onClick={() => copyToClipboard(credential.password, 'Password')}>
+                          📋 Copy
+                        </CopyButton>
+                      )}
+                    </PasswordField>
+                  </CredentialField>
+
+                  {credential.notes && (
+                    <CredentialField>
+                      <FieldLabel>Notes:</FieldLabel>
+                      <FieldValue style={{ fontFamily: 'inherit' }}>{credential.notes}</FieldValue>
+                    </CredentialField>
                   )}
-                  <ShowButton onClick={() => togglePasswordVisibility(credential.id)}>
-                    {showPasswords[credential.id] ? 'Hide' : 'Show'}
-                  </ShowButton>
-                </PasswordField>
-              </CredentialField>
 
-              {credential.notes && (
-                <CredentialField>
-                  <FieldLabel>Notes:</FieldLabel>
-                  <FieldValue style={{ fontFamily: 'inherit' }}>{credential.notes}</FieldValue>
-                </CredentialField>
+                  <ActionButtons>
+                    <EditButton onClick={() => startEdit(credential)}>
+                      ✏️ Edit
+                    </EditButton>
+                    <DeleteButton onClick={() => handleDelete(credential.id)}>
+                      🗑️ Delete
+                    </DeleteButton>
+                  </ActionButtons>
+                </>
               )}
-
-              <ActionButtons>
-                <DeleteButton onClick={() => handleDelete(credential.id)}>
-                  Delete
-                </DeleteButton>
-              </ActionButtons>
             </CredentialCard>
           ))}
         </CredentialsList>
