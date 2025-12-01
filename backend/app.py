@@ -55,9 +55,10 @@ except Exception as e:
     logger.error(f'Failed to initialize MongoDB: {e}')
     mongo = None
 
-# Inject mongo into auth_routes
+# Inject mongo into routes
 auth_routes.set_mongo(mongo)
 credentials_routes.set_mongo(mongo)
+security_questions_routes.set_mongo(mongo)
 
 # Register blueprints with error handling
 try:
