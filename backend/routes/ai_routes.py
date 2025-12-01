@@ -9,6 +9,7 @@ from utils.ai_recommender import (
     generate_ai_password_suggestions
 )
 from utils.password_analyzer import analyze_password_strength
+from utils.auth_helper import token_required
 import os
 
 bp = Blueprint('ai', __name__, url_prefix='/api/ai')
@@ -45,7 +46,8 @@ def get_recommendations():
     }), 200
 
 @bp.route('/generate', methods=['POST'])
-def generate_password():
+@token_required
+def generate_password(current_user):
     """Generate a strong password using AI"""
     try:
         import logging
@@ -122,7 +124,8 @@ def generate_password():
         return jsonify({'error': f'Failed to generate password: {str(e)}'}), 500
 
 @bp.route('/ai-suggestions', methods=['POST'])
-def get_ai_suggestions():
+@token_required
+def get_ai_suggestions(current_user):
     """Get multiple AI-driven password suggestions"""
     try:
         import logging
