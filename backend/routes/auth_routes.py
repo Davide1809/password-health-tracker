@@ -116,26 +116,43 @@ def register():
         return jsonify({'error': f'Registration failed: {str(e)}'}), 500
 
 
-@bp.route('/login', methods=['POST'])
+@bp.route('/login', methods=['POST', 'OPTIONS'])
 def login():
     """Login user and return JWT token"""
     try:
+        # Handle CORS preflight
+        if request.method == 'OPTIONS':
+            return '', 204
+        
+        import logging
+        logger = logging.getLogger(__name__)
+        
         data = request.get_json()
         
+        logger.info(f'🔐 Login attempt - request data present: {bool(data)}')
+        
         if not data:
+            logger.warning('🔐 Login failed: Request body is required')
             return jsonify({'error': 'Request body is required'}), 400
         
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
         
+        logger.info(f'🔐 Login attempt for email: {email}')
+        
         if not email or not password:
+            logger.warning('🔐 Login failed: missing email or password')
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Find user by email
         user_data = mongo.db.users.find_one({'email': email})
         
-        if not user_data or not User.verify_password(password, user_data['password_hash']):
-            # Don't reveal which field is incorrect
+        if not user_data:
+            logger.warning(f'🔐 Login failed: user not found for email {email}')
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        if not User.verify_password(password, user_data['password_hash']):
+            logger.warning(f'🔐 Login failed: incorrect password for {email}')
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Generate JWT token
@@ -151,6 +168,8 @@ def login():
             algorithm='HS256'
         )
         
+        logger.info(f'✅ Login successful for {email}')
+        
         return jsonify({
             'message': 'Login successful',
             'token': token,
@@ -163,6 +182,9 @@ def login():
         }), 200
     
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f'🔐 Login error: {str(e)}', exc_info=True)
         return jsonify({'error': f'Login failed: {str(e)}'}), 500
 
 
