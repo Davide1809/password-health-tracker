@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import styled from 'styled-components';
 import axios from 'axios';
+import { getApiBase } from '../config';
 
 const Container = styled.div`
   max-width: 800px;
@@ -131,17 +132,58 @@ const ScoreLabel = styled.span`
   color: white;
 `;
 
+const ButtonGroup = styled.div`
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+`;
+
+const SecondaryButton = styled(Button)`
+  background: #764ba2;
+  flex: 1;
+`;
+
+const BreachWarning = styled.div`
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #fff3cd;
+  color: #856404;
+  border-radius: 4px;
+  border-left: 4px solid #ffc107;
+`;
+
+const BreachAlert = styled.div`
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #ffebee;
+  color: #c62828;
+  border-radius: 4px;
+  border-left: 4px solid #c62828;
+`;
+
+const BreachSafe = styled.div`
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #e8f5e9;
+  color: #2e7d32;
+  border-radius: 4px;
+  border-left: 4px solid #2e7d32;
+`;
+
 function PasswordChecker() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [generatedPassword, setGeneratedPassword] = useState('');
+  const [suggestionsRemaining, setSuggestionsRemaining] = useState(3);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     setResult(null);
+    setGeneratedPassword('');
 
     if (!password) {
       setError('Please enter a password');
@@ -151,8 +193,9 @@ function PasswordChecker() {
 
     try {
       const token = localStorage.getItem('token');
+      const apiBase = await getApiBase();
       const response = await axios.post(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:5001'}/api/passwords/analyze`,
+        `${apiBase}/api/passwords/analyze`,
         { password },
         {
           headers: {
@@ -166,6 +209,29 @@ function PasswordChecker() {
       setError(errorText);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const generateStrongPassword = async () => {
+    if (suggestionsRemaining <= 0) {
+      setError('Maximum suggestions reached. Refresh page to reset limit.');
+      return;
+    }
+
+    try {
+      const apiBase = await getApiBase();
+      const response = await axios.post(
+        `${apiBase}/api/ai/generate`,
+        {
+          length: 16,
+          use_special: true,
+          use_numbers: true
+        }
+      );
+      setGeneratedPassword(response.data.generated_password);
+      setSuggestionsRemaining(response.data.attempts_remaining);
+    } catch (err) {
+      setError('Failed to generate password');
     }
   };
 
@@ -192,13 +258,31 @@ function PasswordChecker() {
       {error && <ErrorMessage>{error}</ErrorMessage>}
 
       {result && (
-        <ResultsDisplay result={result} />
+        <ResultsDisplay result={result} onGeneratePassword={generateStrongPassword} suggestionsRemaining={suggestionsRemaining} />
+      )}
+
+      {generatedPassword && (
+        <ResultsCard>
+          <h2>✅ Generated Strong Password</h2>
+          <p style={{ marginBottom: '1rem' }}>
+            <strong>Password:</strong>
+            <code style={{ display: 'block', padding: '0.5rem', backgroundColor: '#f5f5f5', borderRadius: '4px', marginTop: '0.5rem', wordBreak: 'break-all' }}>
+              {generatedPassword}
+            </code>
+          </p>
+          <p style={{ color: '#666', fontSize: '0.9rem' }}>
+            This password is displayed but not saved. Copy it to a secure location or password manager.
+          </p>
+          <p style={{ color: '#999', fontSize: '0.85rem' }}>
+            Suggestions remaining this session: {suggestionsRemaining}
+          </p>
+        </ResultsCard>
       )}
     </Container>
   );
 }
 
-function ResultsDisplay({ result }) {
+function ResultsDisplay({ result, onGeneratePassword, suggestionsRemaining }) {
   if (result.error) {
     return <ErrorMessage>{result.error}</ErrorMessage>;
   }
@@ -232,20 +316,37 @@ function ResultsDisplay({ result }) {
         </>
       )}
 
+      {/* Breach Status */}
       {result.breached !== undefined && (
-        <p style={{ marginTop: '1rem' }}>
-          <strong>Breach Status:</strong> {result.breached ? '⚠️ Found in data breaches' : '✓ Not found in known breaches'}
-        </p>
+        <>
+          {result.breached ? (
+            <BreachAlert>
+              <strong>⚠️ Warning: Password Found in Data Breaches!</strong>
+              <p>This password has been seen {result.breach_count} times in known data breaches.</p>
+              <p>You should change this password immediately on all accounts where it's used.</p>
+            </BreachAlert>
+          ) : (
+            <BreachSafe>
+              <strong>✓ Safe: Not Found in Known Breaches</strong>
+              <p>This password has not been detected in any known data breaches.</p>
+            </BreachSafe>
+          )}
+        </>
       )}
 
       {result.recommendations && Array.isArray(result.recommendations) && (
-        <div style={{ marginTop: '1rem' }}>
+        <div style={{ marginTop: '1.5rem' }}>
           <strong>Recommendations:</strong>
-          <ul>
+          <ul style={{ marginTop: '0.5rem' }}>
             {result.recommendations.map((rec, idx) => (
-              <li key={idx}>{rec}</li>
+              <li key={idx} style={{ marginBottom: '0.5rem' }}>{rec}</li>
             ))}
           </ul>
+          <ButtonGroup>
+            <SecondaryButton onClick={onGeneratePassword} disabled={suggestionsRemaining <= 0}>
+              🔄 Generate Strong Password ({suggestionsRemaining} left)
+            </SecondaryButton>
+          </ButtonGroup>
         </div>
       )}
     </ResultsCard>

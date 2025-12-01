@@ -8,6 +8,7 @@ import Results from './pages/Results';
 import About from './pages/About';
 import Login from './pages/Login';
 import SignUp from './pages/SignUp';
+import ForgotPassword from './pages/ForgotPassword';
 import { getRuntimeConfig } from './config';
 
 const AppContainer = styled.div`
@@ -85,6 +86,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login onLoginSuccess={handleLogin} />} />
           <Route path="/signup" element={<SignUp />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route
             path="/dashboard"
             element={

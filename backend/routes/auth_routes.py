@@ -6,6 +6,7 @@ import jwt
 import os
 from datetime import datetime, timedelta
 import re
+from bson.objectid import ObjectId
 from flask_pymongo import PyMongo
 from models.user import User
 
@@ -169,6 +170,128 @@ def login():
 def logout():
     """Logout user (client-side token removal)"""
     return jsonify({'message': 'Logged out successfully'}), 200
+
+
+@bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """Request password reset - sends reset link to email"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        email = data.get('email', '').strip().lower()
+        
+        if not email or not validate_email(email):
+            return jsonify({'error': 'Valid email is required'}), 400
+        
+        # Find user
+        user_data = mongo.db.users.find_one({'email': email})
+        
+        if not user_data:
+            # Don't reveal if email exists (security best practice)
+            return jsonify({
+                'message': 'If email exists in system, password reset link will be sent'
+            }), 200
+        
+        # Generate reset token (valid for 1 hour)
+        reset_token = jwt.encode(
+            {
+                'user_id': str(user_data['_id']),
+                'email': email,
+                'type': 'password_reset',
+                'exp': datetime.utcnow() + timedelta(hours=1)
+            },
+            os.environ.get('JWT_SECRET_KEY', 'dev-secret-key'),
+            algorithm='HS256'
+        )
+        
+        # Store reset token in database (optional for validation)
+        mongo.db.password_resets.insert_one({
+            'email': email,
+            'token': reset_token,
+            'created_at': datetime.utcnow(),
+            'expires_at': datetime.utcnow() + timedelta(hours=1)
+        })
+        
+        # TODO: Send email with reset link
+        # For now, return token (in production, send via email)
+        reset_link = f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/reset-password?token={reset_token}"
+        
+        return jsonify({
+            'message': 'Password reset link sent to email',
+            'reset_link': reset_link  # TODO: Remove in production, only send via email
+        }), 200
+    
+    except Exception as e:
+        return jsonify({'error': f'Password reset request failed: {str(e)}'}), 500
+
+
+@bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password using valid reset token"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        reset_token = data.get('token', '')
+        new_password = data.get('new_password', '')
+        confirm_password = data.get('confirm_password', '')
+        
+        if not reset_token or not new_password:
+            return jsonify({'error': 'Token and new password are required'}), 400
+        
+        if new_password != confirm_password:
+            return jsonify({'error': 'Passwords do not match'}), 400
+        
+        # Validate password strength
+        is_valid, error_message = validate_password_strength(new_password)
+        if not is_valid:
+            return jsonify({'error': error_message}), 400
+        
+        # Verify reset token
+        try:
+            jwt_secret = os.environ.get('JWT_SECRET_KEY', 'dev-secret-key')
+            payload = jwt.decode(reset_token, jwt_secret, algorithms=['HS256'])
+            
+            if payload.get('type') != 'password_reset':
+                return jsonify({'error': 'Invalid reset token'}), 401
+            
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Reset token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid reset token'}), 401
+        
+        # Update password
+        user_id = payload.get('user_id')
+        email = payload.get('email')
+        
+        result = mongo.db.users.update_one(
+            {'_id': ObjectId(user_id), 'email': email},
+            {
+                '$set': {
+                    'password_hash': User.hash_password(new_password),
+                    'updated_at': datetime.utcnow()
+                }
+            }
+        )
+        
+        if result.matched_count == 0:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Remove used reset token
+        mongo.db.password_resets.delete_one({'token': reset_token})
+        
+        return jsonify({
+            'message': 'Password reset successful',
+            'email': email
+        }), 200
+    
+    except Exception as e:
+        return jsonify({'error': f'Password reset failed: {str(e)}'}), 500
 
 
 @bp.route('/verify', methods=['POST'])

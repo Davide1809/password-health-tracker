@@ -221,6 +221,10 @@ const Login = ({ onLoginSuccess }) => {
           Don't have an account?{' '}
           <a href="#signup" onClick={(e) => { e.preventDefault(); navigate('/signup'); }}>Create Account</a>
         </SignUpLink>
+
+        <SignUpLink style={{ marginTop: '0.5rem' }}>
+          <a href="#forgot" onClick={(e) => { e.preventDefault(); navigate('/forgot-password'); }}>Forgot Password?</a>
+        </SignUpLink>
       </FormContainer>
     </Container>
   );
