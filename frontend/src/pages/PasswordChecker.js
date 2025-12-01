@@ -429,43 +429,9 @@ function PasswordChecker() {
       const token = localStorage.getItem('token');
       const apiBase = await getApiBase();
       const response = await axios.post(
-        `${apiBase}/api/ai/generate`,
-        {
-          length: 16,
-          use_special: true,
-          use_numbers: true
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
-      );
-      setGeneratedPassword(response.data.generated_password);
-      setSuggestionsRemaining(response.data.attempts_remaining);
-      setCopiedToClipboard(false);
-      setShowAiSuggestions(false);
-    } catch (err) {
-      setError('Failed to generate password. Please try again.');
-    } finally {
-      setGeneratingPassword(false);
-    }
-  };
-
-  const getAiSuggestions = async () => {
-    if (suggestionsRemaining <= 0) {
-      setError('Maximum suggestions reached. Refresh page to reset limit.');
-      return;
-    }
-
-    setLoadingAiSuggestions(true);
-    try {
-      const token = localStorage.getItem('token');
-      const apiBase = await getApiBase();
-      const response = await axios.post(
         `${apiBase}/api/ai/ai-suggestions`,
         {
-          count: 3,
+          count: 1,
           length: 16
         },
         {
@@ -474,14 +440,19 @@ function PasswordChecker() {
           }
         }
       );
-      setAiSuggestions(response.data.suggestions || []);
+      
+      // Use first suggestion
+      if (response.data.suggestions && response.data.suggestions.length > 0) {
+        setGeneratedPassword(response.data.suggestions[0].password);
+      }
+      
       setSuggestionsRemaining(response.data.attempts_remaining);
-      setShowAiSuggestions(true);
       setCopiedToClipboard(false);
+      setShowAiSuggestions(false);
     } catch (err) {
-      setError('Failed to generate AI suggestions. Please try again.');
+      setError('Failed to generate password. Please try again.');
     } finally {
-      setLoadingAiSuggestions(false);
+      setGeneratingPassword(false);
     }
   };
 
@@ -517,11 +488,9 @@ function PasswordChecker() {
         <ResultsDisplay 
           result={result}
           password={password}
-          onGeneratePassword={generateStrongPassword} 
-          onGetAiSuggestions={getAiSuggestions}
+          onGeneratePassword={generateStrongPassword}
           suggestionsRemaining={suggestionsRemaining}
           generatingPassword={generatingPassword}
-          loadingAiSuggestions={loadingAiSuggestions}
         />
       )}
 
@@ -590,7 +559,7 @@ function PasswordChecker() {
   );
 }
 
-function ResultsDisplay({ result, password, onGeneratePassword, onGetAiSuggestions, suggestionsRemaining, generatingPassword, loadingAiSuggestions }) {
+function ResultsDisplay({ result, password, onGeneratePassword, suggestionsRemaining, generatingPassword }) {
   if (result.error) {
     return <ErrorMessage>{result.error}</ErrorMessage>;
   }
@@ -662,15 +631,12 @@ function ResultsDisplay({ result, password, onGeneratePassword, onGetAiSuggestio
         </div>
       )}
 
-      {/* Password Generation Buttons - Always show after analysis */}
+      {/* Password Generation Button - Always show after analysis */}
       <div style={{ marginTop: '1.5rem' }}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <GenerateButton onClick={onGeneratePassword} disabled={suggestionsRemaining <= 0 || generatingPassword}>
-            {generatingPassword ? '⏳ Generating...' : `🔄 Generate Strong Password (${suggestionsRemaining} left)`}
+            {generatingPassword ? '⏳ Generating...' : `💪 Generate Strong Password (${suggestionsRemaining} left)`}
           </GenerateButton>
-          <AIButton onClick={onGetAiSuggestions} disabled={suggestionsRemaining <= 0 || loadingAiSuggestions}>
-            {loadingAiSuggestions ? '⏳ Getting Suggestions...' : `🤖 Get AI Suggestions (${suggestionsRemaining} left)`}
-          </AIButton>
         </div>
 
         <SecurityRulesBox>
