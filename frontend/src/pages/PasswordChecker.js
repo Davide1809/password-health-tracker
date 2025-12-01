@@ -408,11 +408,6 @@ function PasswordChecker() {
   };
 
   const generateStrongPassword = async () => {
-    if (suggestionsRemaining <= 0) {
-      setError('Maximum suggestions reached. Refresh page to reset limit.');
-      return;
-    }
-
     setGeneratingPassword(true);
     try {
       const token = localStorage.getItem('token');
@@ -499,9 +494,6 @@ function PasswordChecker() {
             <span>ℹ️</span>
             <span>This password is displayed but <strong>not saved</strong>. Copy it to your password manager or save it securely.</span>
           </WarningNote>
-          <AttemptsNote>
-            💡 Generation attempts remaining this session: <strong>{suggestionsRemaining}</strong>
-          </AttemptsNote>
         </ResultsCard>
       )}
 
@@ -623,8 +615,8 @@ function ResultsDisplay({ result, password, onGeneratePassword, suggestionsRemai
       {/* Password Generation Button - Always show after analysis */}
       <div style={{ marginTop: '1.5rem' }}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <GenerateButton onClick={onGeneratePassword} disabled={suggestionsRemaining <= 0 || generatingPassword}>
-            {generatingPassword ? '⏳ Generating...' : `💪 Generate Strong Password (${suggestionsRemaining} left)`}
+          <GenerateButton onClick={onGeneratePassword} disabled={generatingPassword}>
+            {generatingPassword ? '⏳ Generating...' : '💪 Generate Strong Password'}
           </GenerateButton>
         </div>
 

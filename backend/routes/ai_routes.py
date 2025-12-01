@@ -57,27 +57,6 @@ def generate_password(current_user):
         
         data = request.get_json() if request.get_json() else {}
         
-        # Get user ID for tracking attempts (per-user, not per-session)
-        user_id = str(current_user.get('user_id', 'anonymous'))
-        session_key = f"{user_id}_generate"
-        
-        # Track attempts per user per session
-        if session_key not in suggestion_attempts:
-            suggestion_attempts[session_key] = 0
-        
-        suggestion_attempts[session_key] += 1
-        current_attempt = suggestion_attempts[session_key]
-        
-        logger.info(f'🔄 Attempt {current_attempt}/3 for user {user_id}')
-        
-        # Limit to 3 suggestions per session
-        if current_attempt > 3:
-            logger.warning(f'🔄 Attempt limit exceeded: {current_attempt}')
-            return jsonify({
-                'error': 'Maximum suggestions reached (3 per session)',
-                'message': 'Refresh the page to reset your attempts'
-            }), 429
-        
         # Get requirements from request
         length = data.get('length', 16)
         use_special = data.get('use_special', True)
@@ -134,7 +113,6 @@ def generate_password(current_user):
             'entropy': analysis['entropy'],
             'meets_security_rules': is_valid,
             'validation_errors': validation_errors if not is_valid else [],
-            'attempts_remaining': 3 - current_attempt,
             'note': 'This password is displayed but not saved. Copy it to your preferred location.'
         }), 200
     
