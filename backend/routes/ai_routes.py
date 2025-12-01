@@ -57,24 +57,25 @@ def generate_password(current_user):
         
         data = request.get_json() if request.get_json() else {}
         
-        # Get session ID for tracking attempts
-        client_id = request.remote_addr + str(request.headers.get('User-Agent', ''))
+        # Get user ID for tracking attempts (per-user, not per-session)
+        user_id = str(current_user.get('user_id', 'anonymous'))
+        session_key = f"{user_id}_generate"
         
-        # Track attempts per session
-        if client_id not in suggestion_attempts:
-            suggestion_attempts[client_id] = 0
+        # Track attempts per user per session
+        if session_key not in suggestion_attempts:
+            suggestion_attempts[session_key] = 0
         
-        suggestion_attempts[client_id] += 1
-        current_attempt = suggestion_attempts[client_id]
+        suggestion_attempts[session_key] += 1
+        current_attempt = suggestion_attempts[session_key]
         
-        logger.info(f'🔄 Attempt {current_attempt}/3 for client')
+        logger.info(f'🔄 Attempt {current_attempt}/3 for user {user_id}')
         
         # Limit to 3 suggestions per session
         if current_attempt > 3:
             logger.warning(f'🔄 Attempt limit exceeded: {current_attempt}')
             return jsonify({
                 'error': 'Maximum suggestions reached (3 per session)',
-                'message': 'Please refresh to reset suggestion limit'
+                'message': 'Refresh the page to reset your attempts'
             }), 429
         
         # Get requirements from request
@@ -155,22 +156,25 @@ def get_ai_suggestions(current_user):
         
         data = request.get_json() if request.get_json() else {}
         
-        # Get session ID for tracking attempts
-        client_id = request.remote_addr + str(request.headers.get('User-Agent', ''))
+        # Get user ID for tracking attempts (per-user, not per-session)
+        user_id = str(current_user.get('user_id', 'anonymous'))
+        session_key = f"{user_id}_suggestions"
         
-        # Track attempts per session
-        if client_id not in suggestion_attempts:
-            suggestion_attempts[client_id] = 0
+        # Track attempts per user per session
+        if session_key not in suggestion_attempts:
+            suggestion_attempts[session_key] = 0
         
-        suggestion_attempts[client_id] += 1
+        suggestion_attempts[session_key] += 1
+        current_attempt = suggestion_attempts[session_key]
         
-        logger.info(f'🤖 AI suggestions request - attempt {suggestion_attempts[client_id]} for client {client_id}')
+        logger.info(f'🤖 AI suggestions request - attempt {current_attempt} for user {user_id}')
         
         # Limit to 3 suggestion requests per session
-        if suggestion_attempts[client_id] > 3:
+        if current_attempt > 3:
+            logger.warning(f'🤖 Attempt limit exceeded: {current_attempt}')
             return jsonify({
                 'error': 'Maximum suggestions reached (3 per session)',
-                'message': 'Please refresh to reset suggestion limit'
+                'message': 'Refresh the page to reset your attempts'
             }), 429
         
         # Get parameters
@@ -210,7 +214,7 @@ def get_ai_suggestions(current_user):
         return jsonify({
             'suggestions': analyzed_suggestions,
             'count': len(analyzed_suggestions),
-            'attempts_remaining': 3 - suggestion_attempts[client_id],
+            'attempts_remaining': 3 - current_attempt,
             'note': 'Passwords are AI-generated and not saved. Copy to your password manager or save securely.',
             'security_requirements': {
                 'minimum_length': 12,
