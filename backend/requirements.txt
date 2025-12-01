@@ -10,3 +10,4 @@ bcrypt==4.1.1
 Werkzeug==3.0.1
 pymongo==4.6.0
 flake8==7.1.0
+cryptography==41.0.7

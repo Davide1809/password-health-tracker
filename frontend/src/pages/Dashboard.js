@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import styled from 'styled-components';
+import Credentials from '../components/Credentials';
 
 const Container = styled.div`
   max-width: 1200px;
@@ -115,6 +116,8 @@ function Dashboard() {
           and recommendations for improvement.
         </p>
       </Card>
+
+      <Credentials />
     </Container>
   );
 }

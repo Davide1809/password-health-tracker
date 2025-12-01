@@ -10,7 +10,7 @@ from datetime import datetime
 import logging
 
 # Import route blueprints
-from routes import auth_routes, password_routes, breach_routes, ai_routes
+from routes import auth_routes, password_routes, breach_routes, ai_routes, credentials_routes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +29,7 @@ mongo = PyMongo(app)
 
 # Inject mongo into auth_routes
 auth_routes.set_mongo(mongo)
+credentials_routes.set_mongo(mongo)
 
 # Register blueprints with error handling
 try:
@@ -47,6 +48,10 @@ try:
     app.register_blueprint(ai_routes.bp)
 except Exception as e:
     logger.warning(f"Could not register AI routes: {e}")
+try:
+    app.register_blueprint(credentials_routes.bp)
+except Exception as e:
+    logger.warning(f"Could not register credentials routes: {e}")
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
