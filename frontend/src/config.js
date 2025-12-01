@@ -19,7 +19,9 @@ function initializeConfig() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
       
-      const res = await fetch('/config.json', { 
+      // Add cache-buster to ensure fresh config.json
+      const timestamp = Date.now();
+      const res = await fetch(`/config.json?t=${timestamp}`, { 
         cache: 'no-store',
         signal: controller.signal 
       });
