@@ -180,6 +180,10 @@ const EditButton = styled(Button)`
   background: #764ba2;
 `;
 
+const DeleteButton = styled(Button)`
+  background: #ff6b6b;
+`;
+
 const ErrorMessage = styled.div`
   background-color: #ffebee;
   color: #c62828;
