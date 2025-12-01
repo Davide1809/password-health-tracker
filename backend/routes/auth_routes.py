@@ -10,6 +10,11 @@ from bson.objectid import ObjectId
 from flask_pymongo import PyMongo
 from models.user import User
 from utils.email_sender import send_password_reset_email
+from utils.security_questions import (
+    validate_question_id,
+    validate_answer,
+    normalize_answer
+)
 
 bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -71,7 +76,7 @@ def validate_password_strength(password: str) -> tuple:
 
 @bp.route('/register', methods=['POST'])
 def register():
-    """Register a new user"""
+    """Register a new user with security question setup"""
     try:
         data = request.get_json()
         
@@ -82,12 +87,17 @@ def register():
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
         name = data.get('name', '').strip()
+        security_question_id = data.get('security_question_id')
+        security_answer = data.get('security_answer', '')
         
         if not email or not password:
             return jsonify({'error': 'Email and password are required'}), 400
         
         if not name:
             return jsonify({'error': 'Name is required'}), 400
+        
+        if not security_question_id or not security_answer:
+            return jsonify({'error': 'Security question and answer are required'}), 400
         
         # Validate email format
         if not validate_email(email):
@@ -98,12 +108,27 @@ def register():
         if not is_valid:
             return jsonify({'error': error_message}), 400
         
+        # Validate security question ID
+        if not validate_question_id(security_question_id):
+            return jsonify({'error': 'Invalid security question'}), 400
+        
+        # Validate security answer
+        is_valid, error_msg = validate_answer(security_answer)
+        if not is_valid:
+            return jsonify({'error': error_msg}), 400
+        
         # Check if user already exists
         if mongo.db.users.find_one({'email': email}):
             return jsonify({'error': 'Email already registered'}), 409
         
-        # Create new user
-        user = User(email=email, password_hash=User.hash_password(password), name=name)
+        # Create new user with security question
+        user = User(
+            email=email,
+            password_hash=User.hash_password(password),
+            name=name,
+            security_question_id=security_question_id,
+            security_answer_hash=User.hash_password(normalize_answer(security_answer))
+        )
         result = mongo.db.users.insert_one(user.to_dict())
         
         return jsonify({
@@ -114,6 +139,9 @@ def register():
         }), 201
     
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f'Registration failed: {str(e)}', exc_info=True)
         return jsonify({'error': f'Registration failed: {str(e)}'}), 500
 
 
@@ -333,6 +361,87 @@ def reset_password():
     
     except Exception as e:
         return jsonify({'error': f'Password reset failed: {str(e)}'}), 500
+
+
+@bp.route('/verify-security-answer', methods=['POST'])
+def verify_security_answer():
+    """
+    Verify security question answer during password recovery
+    Must be called before reset-password
+    
+    Request body:
+    {
+        "email": "user@email.com",
+        "security_answer": "user's answer"
+    }
+    
+    Response: security_token (temporary token to verify security answer passed)
+    """
+    try:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        email = data.get('email', '').strip().lower()
+        security_answer = data.get('security_answer', '').strip()
+        
+        if not email or not security_answer:
+            return jsonify({'error': 'Email and security answer are required'}), 400
+        
+        # Find user
+        user_data = mongo.db.users.find_one({'email': email})
+        
+        if not user_data:
+            # Don't reveal if email exists (security best practice)
+            logger.warning(f'Security answer verification failed: email {email} not found')
+            return jsonify({
+                'error': 'Invalid email or security answer'
+            }), 401
+        
+        # Check if user has security question set
+        if not user_data.get('security_answer_hash'):
+            logger.warning(f'Security answer verification failed: user {email} has no security question set')
+            return jsonify({
+                'error': 'User account not properly configured for recovery'
+            }), 400
+        
+        # Verify answer (case-insensitive, trimmed)
+        normalized_answer = normalize_answer(security_answer)
+        if not User.verify_password(normalized_answer, user_data['security_answer_hash']):
+            logger.warning(f'Security answer verification failed for {email}: incorrect answer')
+            return jsonify({
+                'error': 'Invalid email or security answer'
+            }), 401
+        
+        # Generate temporary security verification token (valid for 15 minutes)
+        security_token = jwt.encode(
+            {
+                'user_id': str(user_data['_id']),
+                'email': email,
+                'type': 'security_verified',
+                'exp': datetime.utcnow() + timedelta(minutes=15)
+            },
+            os.environ.get('JWT_SECRET_KEY', 'dev-secret-key'),
+            algorithm='HS256'
+        )
+        
+        logger.info(f'✅ Security answer verified for {email}')
+        
+        return jsonify({
+            'message': 'Security answer verified',
+            'security_token': security_token,
+            'question_id': user_data.get('security_question_id')
+        }), 200
+    
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f'Security answer verification failed: {str(e)}', exc_info=True)
+        return jsonify({'error': 'Verification failed'}), 500
 
 
 @bp.route('/verify', methods=['POST'])

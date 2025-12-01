@@ -9,7 +9,8 @@ import bcrypt
 class User:
     """User model representing a registered user in the system"""
     
-    def __init__(self, email, password_hash, name=None, created_at=None, updated_at=None, _id=None):
+    def __init__(self, email, password_hash, name=None, created_at=None, updated_at=None, _id=None, 
+                 security_question_id=None, security_answer_hash=None):
         """
         Initialize User object
         
@@ -20,6 +21,8 @@ class User:
             created_at (datetime): Account creation timestamp
             updated_at (datetime): Last update timestamp
             _id (ObjectId): MongoDB document ID
+            security_question_id (int): ID of chosen security question
+            security_answer_hash (str): Hashed security question answer
         """
         self._id = _id or ObjectId()
         self.email = email
@@ -27,6 +30,8 @@ class User:
         self.name = name or 'User'
         self.created_at = created_at or datetime.utcnow()
         self.updated_at = updated_at or datetime.utcnow()
+        self.security_question_id = security_question_id
+        self.security_answer_hash = security_answer_hash
     
     @staticmethod
     def hash_password(password: str) -> str:
@@ -64,7 +69,9 @@ class User:
             'password_hash': self.password_hash,
             'name': self.name,
             'created_at': self.created_at,
-            'updated_at': self.updated_at
+            'updated_at': self.updated_at,
+            'security_question_id': self.security_question_id,
+            'security_answer_hash': self.security_answer_hash
         }
     
     @classmethod
@@ -76,7 +83,9 @@ class User:
             name=data.get('name'),
             created_at=data.get('created_at'),
             updated_at=data.get('updated_at'),
-            _id=data.get('_id')
+            _id=data.get('_id'),
+            security_question_id=data.get('security_question_id'),
+            security_answer_hash=data.get('security_answer_hash')
         )
     
     def __repr__(self):

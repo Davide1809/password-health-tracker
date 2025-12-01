@@ -10,7 +10,14 @@ from datetime import datetime
 import logging
 
 # Import route blueprints
-from routes import auth_routes, password_routes, breach_routes, ai_routes, credentials_routes
+from routes import (
+    auth_routes,
+    password_routes,
+    breach_routes,
+    ai_routes,
+    credentials_routes,
+    security_questions_routes
+)
 from utils import email_sender
 
 # Configure logging
@@ -73,6 +80,10 @@ try:
     app.register_blueprint(credentials_routes.bp)
 except Exception as e:
     logger.warning(f"Could not register credentials routes: {e}")
+try:
+    app.register_blueprint(security_questions_routes.bp)
+except Exception as e:
+    logger.warning(f"Could not register security questions routes: {e}")
 
 @app.route('/api/health', methods=['GET'])
 def health_check():

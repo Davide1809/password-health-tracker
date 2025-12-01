@@ -70,6 +70,25 @@ const Input = styled.input`
   }
 `;
 
+const Select = styled.select`
+  padding: 0.75rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 1rem;
+  transition: border-color 0.3s ease;
+  background-color: white;
+  cursor: pointer;
+
+  &:focus {
+    outline: none;
+    border-color: #667eea;
+  }
+
+  &:invalid:not(:placeholder-shown) {
+    border-color: #ff6b6b;
+  }
+`;
+
 const PasswordRequirements = styled.div`
   font-size: 0.85rem;
   color: #666;
@@ -158,8 +177,11 @@ const SignUp = () => {
     name: '',
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    security_question_id: '',
+    security_answer: ''
   });
+  const [questions, setQuestions] = useState([]);
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
@@ -169,10 +191,24 @@ const SignUp = () => {
     console.log('📝 SignUp component mounted, ensuring config is ready...');
     getRuntimeConfig().then(() => {
       console.log('📝 Config ready on SignUp component mount');
+      fetchSecurityQuestions();
     }).catch((err) => {
       console.warn('📝 Config initialization error (will use fallback):', err);
     });
   }, []);
+
+  // Fetch security questions
+  const fetchSecurityQuestions = async () => {
+    try {
+      const apiBase = await getApiBase();
+      const response = await axios.get(`${apiBase}/api/security-questions/questions`);
+      setQuestions(response.data.questions || []);
+      console.log('✅ Security questions loaded:', response.data.questions.length);
+    } catch (error) {
+      console.error('❌ Failed to load security questions:', error);
+      setMessage({ type: 'warning', text: 'Could not load security questions' });
+    }
+  };
 
   // Password strength requirements
   const passwordRequirements = {
@@ -229,6 +265,17 @@ const SignUp = () => {
       newErrors.confirmPassword = 'Passwords do not match';
     }
 
+    // Security question validation
+    if (!formData.security_question_id) {
+      newErrors.security_question_id = 'Please select a security question';
+    }
+
+    if (!formData.security_answer) {
+      newErrors.security_answer = 'Security answer is required';
+    } else if (formData.security_answer.length < 2) {
+      newErrors.security_answer = 'Answer must be at least 2 characters';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -254,7 +301,9 @@ const SignUp = () => {
         {
           name: formData.name,
           email: formData.email,
-          password: formData.password
+          password: formData.password,
+          security_question_id: parseInt(formData.security_question_id),
+          security_answer: formData.security_answer
         }
       );
 
@@ -265,7 +314,14 @@ const SignUp = () => {
       });
 
       // Clear form
-      setFormData({ name: '', email: '', password: '', confirmPassword: '' });
+      setFormData({ 
+        name: '', 
+        email: '', 
+        password: '', 
+        confirmPassword: '',
+        security_question_id: '',
+        security_answer: ''
+      });
 
       // Redirect to login after 2 seconds
       setTimeout(() => {
@@ -366,6 +422,39 @@ const SignUp = () => {
             />
             {errors.confirmPassword && (
               <ErrorMessage>{errors.confirmPassword}</ErrorMessage>
+            )}
+          </FormGroup>
+
+          <FormGroup>
+            <Label htmlFor="security_question_id">🔐 Security Question (for account recovery)</Label>
+            <Select
+              id="security_question_id"
+              name="security_question_id"
+              value={formData.security_question_id}
+              onChange={handleChange}
+            >
+              <option value="">-- Select a security question --</option>
+              {questions.map(q => (
+                <option key={q.id} value={q.id}>{q.question}</option>
+              ))}
+            </Select>
+            {errors.security_question_id && (
+              <ErrorMessage>{errors.security_question_id}</ErrorMessage>
+            )}
+          </FormGroup>
+
+          <FormGroup>
+            <Label htmlFor="security_answer">Answer to Security Question</Label>
+            <Input
+              id="security_answer"
+              type="text"
+              name="security_answer"
+              value={formData.security_answer}
+              onChange={handleChange}
+              placeholder="Your answer"
+            />
+            {errors.security_answer && (
+              <ErrorMessage>{errors.security_answer}</ErrorMessage>
             )}
           </FormGroup>
 

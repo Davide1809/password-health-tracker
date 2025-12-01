@@ -66,6 +66,16 @@ const Input = styled.input`
   }
 `;
 
+const QuestionDisplay = styled.div`
+  background-color: #f5f5f5;
+  padding: 1rem;
+  border-radius: 6px;
+  border-left: 4px solid #667eea;
+  margin-bottom: 1rem;
+  font-weight: 500;
+  color: #333;
+`;
+
 const Button = styled.button`
   padding: 0.75rem;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -126,13 +136,17 @@ const LoginLink = styled.p`
 function ForgotPassword() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [step, setStep] = useState('email'); // 'email' or 'reset'
+  const [step, setStep] = useState('email'); // 'email', 'security', or 'reset'
   const [email, setEmail] = useState('');
+  const [securityAnswer, setSecurityAnswer] = useState('');
+  const [securityQuestion, setSecurityQuestion] = useState('');
+  const [securityQuestionId, setSecurityQuestionId] = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
+  const [securityToken, setSecurityToken] = useState('');
   const resetToken = searchParams.get('token');
 
   // If reset token exists in URL, skip to reset step
@@ -159,21 +173,60 @@ function ForgotPassword() {
     setLoading(true);
     try {
       const apiBase = await getApiBase();
-      await axios.post(
+      // First, verify the email exists and get the question
+      const response = await axios.post(
         `${apiBase}/api/auth/forgot-password`,
         { email }
       );
 
+      // The backend will send the question in the response or we move to security step
       setMessage({
         type: 'success',
-        text: 'If this email exists in our system, a password reset link has been sent.'
+        text: 'Email verified! Now answer your security question.'
       });
       
-      setTimeout(() => {
-        navigate('/login');
-      }, 3000);
+      // Move to security question verification step
+      setStep('security');
     } catch (error) {
-      const errorText = error.response?.data?.error || 'Failed to request password reset';
+      const errorText = error.response?.data?.error || 'Failed to verify email';
+      setMessage({ type: 'error', text: errorText });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifySecurityAnswer = async (e) => {
+    e.preventDefault();
+    setErrors({});
+
+    if (!securityAnswer) {
+      setErrors({ securityAnswer: 'Security answer is required' });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const apiBase = await getApiBase();
+      const response = await axios.post(
+        `${apiBase}/api/auth/verify-security-answer`,
+        {
+          email: email,
+          security_answer: securityAnswer
+        }
+      );
+
+      // Store security token for password reset
+      setSecurityToken(response.data.security_token);
+      
+      setMessage({
+        type: 'success',
+        text: 'Security answer verified! Now create your new password.'
+      });
+      
+      // Move to password reset step
+      setStep('reset');
+    } catch (error) {
+      const errorText = error.response?.data?.error || 'Failed to verify security answer';
       setMessage({ type: 'error', text: errorText });
     } finally {
       setLoading(false);
@@ -206,10 +259,14 @@ function ForgotPassword() {
     setLoading(true);
     try {
       const apiBase = await getApiBase();
+      
+      // Use either the security token or the URL reset token
+      const token = securityToken || resetToken;
+      
       await axios.post(
         `${apiBase}/api/auth/reset-password`,
         {
-          token: resetToken,
+          token: token,
           new_password: newPassword,
           confirm_password: confirmPassword
         }
@@ -236,7 +293,9 @@ function ForgotPassword() {
       <FormContainer>
         <Title>🔐 Reset Password</Title>
         <Subtitle>
-          {step === 'email' ? 'Enter your email to receive a reset link' : 'Create a new password'}
+          {step === 'email' && 'Enter your email to get started'}
+          {step === 'security' && 'Answer your security question'}
+          {step === 'reset' && 'Create a new password'}
         </Subtitle>
 
         {message.text && (
@@ -247,7 +306,7 @@ function ForgotPassword() {
           )
         )}
 
-        {step === 'email' ? (
+        {step === 'email' && (
           <Form onSubmit={handleRequestReset}>
             <FormGroup>
               <Label htmlFor="email">Email Address</Label>
@@ -263,10 +322,37 @@ function ForgotPassword() {
             </FormGroup>
 
             <Button type="submit" disabled={loading}>
-              {loading ? 'Sending...' : 'Send Reset Link'}
+              {loading ? 'Verifying...' : 'Verify Email'}
             </Button>
           </Form>
-        ) : (
+        )}
+
+        {step === 'security' && (
+          <Form onSubmit={handleVerifySecurityAnswer}>
+            <FormGroup>
+              <Label>Please answer your security question:</Label>
+              <QuestionDisplay>
+                {securityQuestion || '...'}
+              </QuestionDisplay>
+              <Label htmlFor="securityAnswer">Your Answer</Label>
+              <Input
+                id="securityAnswer"
+                type="text"
+                value={securityAnswer}
+                onChange={(e) => setSecurityAnswer(e.target.value)}
+                placeholder="Your security answer"
+                disabled={loading}
+              />
+              {errors.securityAnswer && <ErrorMessage>{errors.securityAnswer}</ErrorMessage>}
+            </FormGroup>
+
+            <Button type="submit" disabled={loading}>
+              {loading ? 'Verifying...' : 'Verify Answer'}
+            </Button>
+          </Form>
+        )}
+
+        {step === 'reset' && (
           <Form onSubmit={handleResetPassword}>
             <FormGroup>
               <Label htmlFor="newPassword">New Password</Label>
