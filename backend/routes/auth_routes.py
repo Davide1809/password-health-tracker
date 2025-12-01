@@ -145,7 +145,7 @@ def login():
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Check if mongo is available
-        if not mongo or not mongo.db:
+        if not mongo or mongo.db is None:
             logger.error('🔐 MongoDB connection not available')
             return jsonify({'error': 'Database connection error'}), 500
         
