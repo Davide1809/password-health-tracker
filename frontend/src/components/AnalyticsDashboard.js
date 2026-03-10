@@ -106,21 +106,6 @@ const StatCard = styled.div`
   }
 `;
 
-const PieChart = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2rem;
-  padding: 2rem;
-  background: #f9f9f9;
-  border-radius: 6px;
-
-  svg {
-    width: 200px;
-    height: 200px;
-  }
-`;
-
 const Legend = styled.div`
   display: flex;
   flex-direction: column;
@@ -175,6 +160,7 @@ function AnalyticsDashboard() {
 
   useEffect(() => {
     fetchCredentials();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const fetchCredentials = async () => {

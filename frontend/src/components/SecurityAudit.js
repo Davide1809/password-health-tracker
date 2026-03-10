@@ -214,12 +214,6 @@ function SecurityAudit() {
     }
   };
 
-  const getScoreColor = (score) => {
-    if (score >= 80) return '#4caf50'; // Green
-    if (score >= 60) return '#ff9800'; // Orange
-    return '#f44336'; // Red
-  };
-
   return (
     <AuditContainer>
       <Title>🔐 Security Audit</Title>
