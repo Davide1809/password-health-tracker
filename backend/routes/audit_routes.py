@@ -25,7 +25,6 @@ def set_limiter(limiter_instance):
 
 
 @bp.route('/scan', methods=['POST'])
-@limiter.limit("10 per hour")
 def scan_credentials():
     """
     Scan all user credentials for security issues
