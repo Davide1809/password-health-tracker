@@ -9,6 +9,7 @@ import jwt
 import os
 from bson.objectid import ObjectId
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 bp = Blueprint('audit', __name__, url_prefix='/api/audit')
@@ -89,26 +90,31 @@ def scan_credentials():
             password = cred.get('password', '')
             username = cred.get('username', '')
 
-            # Calculate strength
-            strength = analyze_password_strength(password)
-            strength_level = strength.get('strength', 'Unknown')
+            try:
+                # Calculate strength
+                strength = analyze_password_strength(password)
+                strength_level = strength.get('strength', 'Unknown')
 
-            # Check for weak passwords
-            if strength_level in ['Weak', 'Fair', 'Very Weak']:
-                weak_passwords.append({
-                    'id': str(cred.get('_id', '')),
-                    'website': website,
-                    'username': username,
-                    'strength': strength_level,
-                    'score': int((strength.get('score', 0) / 4) * 100),  # Convert 0-4 scale to 0-100
-                    'feedback': strength.get('recommendations', [])
-                })
-            else:
-                strong_passwords.append({
-                    'website': website,
-                    'strength': strength_level,
-                    'score': int((strength.get('score', 0) / 4) * 100)  # Convert 0-4 scale to 0-100
-                })
+                # Check for weak passwords
+                if strength_level in ['Weak', 'Fair', 'Very Weak']:
+                    weak_passwords.append({
+                        'id': str(cred.get('_id', '')),
+                        'website': website,
+                        'username': username,
+                        'strength': strength_level,
+                        'score': int((strength.get('score', 0) / 4) * 100),  # Convert 0-4 scale to 0-100
+                        'feedback': strength.get('recommendations', [])
+                    })
+                else:
+                    strong_passwords.append({
+                        'website': website,
+                        'strength': strength_level,
+                        'score': int((strength.get('score', 0) / 4) * 100)  # Convert 0-4 scale to 0-100
+                    })
+            except Exception as cred_error:
+                logger.error(f'Error analyzing password for {website}: {str(cred_error)}')
+                # Continue with next credential
+                continue
 
             # Check for breached passwords
             if cred.get('breach_status') == True:
@@ -169,4 +175,5 @@ def scan_credentials():
 
     except Exception as e:
         logger.error(f'Audit scan error: {str(e)}')
-        return jsonify({'error': 'Failed to scan credentials'}), 500
+        logger.error(traceback.format_exc())
+        return jsonify({'error': f'Failed to scan credentials: {str(e)}'}), 500
