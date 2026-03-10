@@ -5,6 +5,8 @@ Endpoints for scanning and auditing password security
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 from utils.password_analyzer import analyze_password_strength
+from utils.breach_checker import check_breach
+from models.credential import Credential
 import jwt
 import os
 from bson.objectid import ObjectId
@@ -87,10 +89,13 @@ def scan_credentials():
         # Analyze each credential
         for cred in credentials:
             website = cred.get('website_name', 'Unknown')
-            password = cred.get('password', '')
+            encrypted_password = cred.get('password', '')
             username = cred.get('username', '')
 
             try:
+                # Decrypt password before analyzing
+                password = Credential.decrypt_password(encrypted_password)
+                
                 # Calculate strength
                 strength = analyze_password_strength(password)
                 strength_level = strength.get('strength', 'Unknown')

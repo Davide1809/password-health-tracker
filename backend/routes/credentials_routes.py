@@ -9,6 +9,7 @@ from bson.objectid import ObjectId
 from flask_pymongo import PyMongo
 from models.credential import Credential
 from utils.password_analyzer import analyze_password_strength
+from utils.breach_checker import check_breach
 
 bp = Blueprint('credentials', __name__, url_prefix='/api/credentials')
 
@@ -61,6 +62,11 @@ def add_credential():
         if not website_name or not username or not password:
             return jsonify({'error': 'website_name, username, and password are required'}), 400
         
+        # Check for breach
+        breach_check = check_breach(password)
+        breach_status = breach_check.get('breached', False)
+        breach_count = breach_check.get('breach_count', 0)
+        
         # Create credential (password will be encrypted in to_dict)
         credential = Credential(
             user_id=ObjectId(user_id),
@@ -70,7 +76,12 @@ def add_credential():
             notes=notes
         )
         
-        result = mongo.db.credentials.insert_one(credential.to_dict(decrypt=False))
+        # Add breach information
+        cred_dict = credential.to_dict(decrypt=False)
+        cred_dict['breach_status'] = breach_status
+        cred_dict['breach_count'] = breach_count
+        
+        result = mongo.db.credentials.insert_one(cred_dict)
         
         return jsonify({
             'message': 'Credential added successfully',
