@@ -56,29 +56,26 @@ CORS(app, resources={
 })
 
 # Initialize rate limiter
-def is_preflight_request():
-    """Skip rate limiting for CORS preflight requests"""
-    return request.method == 'OPTIONS'
+def get_limiter_key():
+    """Get key for rate limiting, skip for OPTIONS requests (CORS preflight)"""
+    if request.method == 'OPTIONS':
+        return None  # Don't rate limit preflight requests
+    return get_remote_address()
 
 limiter = Limiter(
     app=app,
-    key_func=get_remote_address,
+    key_func=get_limiter_key,
     default_limits=["200 per day", "50 per hour"],
-    in_memory_fallback_enabled=True,
-    exempt_when=is_preflight_request
+    in_memory_fallback_enabled=True
 )
 
 # Initialize Flask-Mail for email sending
 email_sender.init_mail(app)
 
-# Initialize MongoDB with connection pooling
-try:
-    mongo = PyMongo(app)
-    # Test connection
-    logger.info('Initializing MongoDB connection...')
-except Exception as e:
-    logger.error(f'Failed to initialize MongoDB: {e}')
-    mongo = None
+# Initialize MongoDB with lazy loading (don't block startup)
+# Connection will be established when first accessed
+mongo = PyMongo(app)
+logger.info('MongoDB configured (lazy initialization)')
 
 # Inject mongo and limiter into routes
 auth_routes.set_mongo(mongo)
