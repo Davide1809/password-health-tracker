@@ -213,7 +213,7 @@ function AnalyticsDashboard() {
     const safeCount = credentials.length - breachedCount;
 
     credentials.forEach(cred => {
-      const strength = calculatePasswordStrength(cred.password);
+      const strength = cred.strength || calculatePasswordStrength(cred.password);
       strengthCounts[strength]++;
     });
 

@@ -8,6 +8,7 @@ from datetime import datetime
 from bson.objectid import ObjectId
 from flask_pymongo import PyMongo
 from models.credential import Credential
+from utils.password_analyzer import analyze_password_strength
 
 bp = Blueprint('credentials', __name__, url_prefix='/api/credentials')
 
@@ -97,6 +98,10 @@ def get_credentials():
             cred_obj = Credential.from_dict(cred)
             # Decrypt password
             decrypted_password = Credential.decrypt_password(cred_obj.password)
+            
+            # Analyze password strength
+            strength_analysis = analyze_password_strength(decrypted_password)
+            
             decrypted_credentials.append({
                 'id': str(cred['_id']),
                 'website_name': cred['website_name'],
@@ -104,7 +109,11 @@ def get_credentials():
                 'password': decrypted_password,
                 'notes': cred.get('notes', ''),
                 'created_at': cred['created_at'].isoformat() if cred.get('created_at') else None,
-                'updated_at': cred['updated_at'].isoformat() if cred.get('updated_at') else None
+                'updated_at': cred['updated_at'].isoformat() if cred.get('updated_at') else None,
+                'strength': strength_analysis.get('strength', 'Unknown'),
+                'strength_score': int((strength_analysis.get('score', 0) / 4) * 100),
+                'breach_status': cred.get('breach_status', False),
+                'breach_count': cred.get('breach_count', 0)
             })
         
         return jsonify({

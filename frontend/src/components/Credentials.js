@@ -702,8 +702,8 @@ function Credentials() {
                   <CredentialHeader>
                     <WebsiteName>{credential.website_name}</WebsiteName>
                     <div>
-                      <StrengthBadge strength={calculatePasswordStrength(credential.password)}>
-                        {calculatePasswordStrength(credential.password)}
+                      <StrengthBadge strength={credential.strength || calculatePasswordStrength(credential.password)}>
+                        {credential.strength || calculatePasswordStrength(credential.password)}
                       </StrengthBadge>
                       <BreachBadge breached={credential.breach_status === true}>
                         {credential.breach_status === true ? '⚠️ Breached' : '✅ Safe'}
