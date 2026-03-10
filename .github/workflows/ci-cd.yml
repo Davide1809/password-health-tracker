@@ -121,7 +121,7 @@ jobs:
             --image=${{ env.REGISTRY }}/${{ env.GCP_PROJECT_ID }}/password-tracker-backend:latest \
             --platform managed \
             --region us-central1 \
-            --set-env-vars=MONGO_URI="${{ secrets.MONGO_URI }}",JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}",OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}",CREDENTIAL_ENCRYPTION_KEY="${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}" \
+            --set-env-vars=MONGO_URI="${{ secrets.MONGO_URI }}",JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}",OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}",CREDENTIAL_ENCRYPTION_KEY="${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}",ALLOWED_ORIGINS="https://password-tracker-frontend-681629792414.us-central1.run.app" \
             --allow-unauthenticated
           
           gcloud run deploy password-tracker-frontend \
