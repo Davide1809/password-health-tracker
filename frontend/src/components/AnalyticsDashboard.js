@@ -153,7 +153,7 @@ const LoadingMessage = styled.div`
   color: #666;
 `;
 
-function AnalyticsDashboard() {
+function AnalyticsDashboard({ refetchTrigger = 0 }) {
   const [credentials, setCredentials] = useState([]);
   const [loading, setLoading] = useState(true);
   const token = localStorage.getItem('token');
@@ -161,7 +161,7 @@ function AnalyticsDashboard() {
   useEffect(() => {
     fetchCredentials();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, refetchTrigger]);
 
   const fetchCredentials = async () => {
     try {

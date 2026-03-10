@@ -151,6 +151,7 @@ function Dashboard() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
 
   useEffect(() => {
     // Handle page close/tab close - auto logout
@@ -241,11 +242,11 @@ function Dashboard() {
         </p>
       </Card>
 
-      <Credentials />
+      <Credentials onDataChanged={() => setRefetchTrigger(prev => prev + 1)} />
 
-      <AnalyticsDashboard />
+      <AnalyticsDashboard refetchTrigger={refetchTrigger} />
 
-      <SecurityAudit />
+      <SecurityAudit refetchTrigger={refetchTrigger} />
 
       <DangerZone>
         <h3>⚠️ Danger Zone</h3>

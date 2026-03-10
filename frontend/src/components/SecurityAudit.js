@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import axios from 'axios';
 import { getApiBase } from '../config';
@@ -184,7 +184,7 @@ const EmptyState = styled.div`
   }
 `;
 
-function SecurityAudit() {
+function SecurityAudit({ refetchTrigger = 0 }) {
   const [auditReport, setAuditReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -213,6 +213,14 @@ function SecurityAudit() {
       setLoading(false);
     }
   };
+
+  // Auto-run audit when refetchTrigger changes
+  useEffect(() => {
+    if (refetchTrigger > 0) {
+      handleRunAudit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refetchTrigger]);
 
   return (
     <AuditContainer>

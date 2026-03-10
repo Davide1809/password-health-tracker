@@ -166,6 +166,10 @@ def update_credential(credential_id):
         if 'password' in data and data['password']:
             # Encrypt new password
             update_data['password'] = Credential.encrypt_password(data['password'])
+            # Re-check breach status for new password
+            breach_check = check_breach(data['password'])
+            update_data['breach_status'] = breach_check.get('breached', False)
+            update_data['breach_count'] = breach_check.get('breach_count', 0)
         if 'notes' in data:
             update_data['notes'] = data['notes'].strip()
         

@@ -330,7 +330,7 @@ const calculatePasswordStrength = (password) => {
   return 'Very Strong';
 };
 
-function Credentials() {
+function Credentials({ onDataChanged }) {
   const [credentials, setCredentials] = useState([]);
   const [formData, setFormData] = useState({
     website_name: '',
@@ -399,6 +399,7 @@ function Credentials() {
       setMessage({ type: 'success', text: 'Credential added successfully!' });
       setFormData({ website_name: '', username: '', password: '', notes: '' });
       fetchCredentials();
+      if (onDataChanged) onDataChanged();
     } catch (error) {
       const errorText = error.response?.data?.error || 'Failed to add credential';
       setMessage({ type: 'error', text: errorText });
@@ -423,6 +424,7 @@ function Credentials() {
 
       setMessage({ type: 'success', text: 'Credential deleted successfully!' });
       fetchCredentials();
+      if (onDataChanged) onDataChanged();
     } catch (error) {
       const errorText = error.response?.data?.error || 'Failed to delete credential';
       setMessage({ type: 'error', text: errorText });
@@ -485,6 +487,7 @@ function Credentials() {
       setEditingId(null);
       setEditFormData({});
       fetchCredentials();
+      if (onDataChanged) onDataChanged();
     } catch (error) {
       const errorText = error.response?.data?.error || 'Failed to update credential';
       setMessage({ type: 'error', text: errorText });
@@ -504,7 +507,7 @@ function Credentials() {
 
       // Strength filter
       if (filterStrength !== 'all') {
-        const strength = calculatePasswordStrength(credential.password);
+        const strength = credential.strength || calculatePasswordStrength(credential.password);
         if (strength !== filterStrength) return false;
       }
 
