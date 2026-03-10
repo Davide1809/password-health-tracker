@@ -219,6 +219,134 @@ const SuccessMessage = styled.div`
   margin-bottom: 1rem;
 `;
 
+const SearchFilterSection = styled.div`
+  background: #f0f4ff;
+  padding: 1.5rem;
+  border-radius: 6px;
+  margin-bottom: 2rem;
+  border: 2px solid #e0e8ff;
+`;
+
+const SearchContainer = styled.div`
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+  }
+`;
+
+const SearchInput = styled(Input)`
+  flex: 1;
+  min-width: 250px;
+`;
+
+const FilterGroup = styled.div`
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+  }
+`;
+
+const Select = styled.select`
+  padding: 0.75rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  background: white;
+  cursor: pointer;
+  transition: border-color 0.3s ease;
+
+  &:focus {
+    outline: none;
+    border-color: #667eea;
+  }
+`;
+
+const FilterLabel = styled.label`
+  color: #333;
+  font-weight: 600;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+`;
+
+const ResultCount = styled.div`
+  color: #666;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+`;
+
+const StrengthBadge = styled.span`
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background-color: ${props => {
+    switch(props.strength) {
+      case 'Very Strong': return '#4caf50';
+      case 'Strong': return '#8bc34a';
+      case 'Fair': return '#ff9800';
+      case 'Weak': return '#f44336';
+      default: return '#999';
+    }
+  }};
+  color: white;
+`;
+
+const BreachBadge = styled.span`
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background-color: ${props => props.breached ? '#f44336' : '#4caf50'};
+  color: white;
+  margin-left: 0.5rem;
+`;
+
+// Helper function to calculate password strength
+const calculatePasswordStrength = (password) => {
+  let strength = 0;
+  if (password.length >= 8) strength++;
+  if (password.length >= 12) strength++;
+  if (password.length >= 16) strength++;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
+  if (/\d/.test(password)) strength++;
+  if (/[^a-zA-Z\d]/.test(password)) strength++;
+
+  if (strength <= 1) return 'Weak';
+  if (strength <= 2) return 'Weak';
+  if (strength <= 3) return 'Fair';
+  if (strength <= 4) return 'Strong';
+  return 'Very Strong';
+};
+
+// Helper function to calculate days since creation
+const getDaysSinceCreation = (createdDate) => {
+  if (!createdDate) return null;
+  const created = new Date(createdDate);
+  const now = new Date();
+  return Math.floor((now - created) / (1000 * 60 * 60 * 24));
+};
+
+// Helper function to get breach status
+const getAgeCategory = (createdDate) => {
+  const days = getDaysSinceCreation(createdDate);
+  if (days === null) return 'unknown';
+  if (days <= 30) return 'recent';
+  if (days <= 90) return 'moderate';
+  return 'old';
+};
+
 function Credentials() {
   const [credentials, setCredentials] = useState([]);
   const [formData, setFormData] = useState({
@@ -232,6 +360,10 @@ function Credentials() {
   const [editFormData, setEditFormData] = useState({});
   const [message, setMessage] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStrength, setFilterStrength] = useState('all');
+  const [filterBreach, setFilterBreach] = useState('all');
+  const [filterAge, setFilterAge] = useState('all');
   const token = localStorage.getItem('token');
 
   // Fetch credentials on mount
@@ -377,6 +509,40 @@ function Credentials() {
     }
   };
 
+  // Filter credentials based on search and filter values
+  const getFilteredCredentials = () => {
+    return credentials.filter(credential => {
+      // Search filter
+      const searchLower = searchTerm.toLowerCase();
+      const matchesSearch = !searchTerm || 
+        credential.website_name.toLowerCase().includes(searchLower) ||
+        credential.username.toLowerCase().includes(searchLower);
+
+      if (!matchesSearch) return false;
+
+      // Strength filter
+      if (filterStrength !== 'all') {
+        const strength = calculatePasswordStrength(credential.password);
+        if (strength !== filterStrength) return false;
+      }
+
+      // Breach status filter (based on backend breach data if available)
+      if (filterBreach !== 'all') {
+        const isBreached = credential.breach_status === true;
+        if (filterBreach === 'breached' && !isBreached) return false;
+        if (filterBreach === 'safe' && isBreached) return false;
+      }
+
+      // Age filter
+      if (filterAge !== 'all') {
+        const ageCategory = getAgeCategory(credential.created_date);
+        if (filterAge !== ageCategory) return false;
+      }
+
+      return true;
+    });
+  };
+
   return (
     <CredentialsContainer>
       <Title>🔐 Saved Credentials</Title>
@@ -454,13 +620,64 @@ function Credentials() {
         Your Credentials ({credentials.length})
       </h3>
 
-      {credentials.length === 0 ? (
+      {credentials.length > 0 && (
+        <SearchFilterSection>
+          <h4 style={{ marginTop: 0, color: '#333', marginBottom: '1rem' }}>🔍 Search & Filter</h4>
+          
+          <SearchContainer>
+            <SearchInput
+              type="text"
+              placeholder="Search by website or username..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </SearchContainer>
+
+          <FilterGroup>
+            <FilterLabel>
+              Strength:
+              <Select value={filterStrength} onChange={(e) => setFilterStrength(e.target.value)}>
+                <option value="all">All</option>
+                <option value="Weak">Weak</option>
+                <option value="Fair">Fair</option>
+                <option value="Strong">Strong</option>
+                <option value="Very Strong">Very Strong</option>
+              </Select>
+            </FilterLabel>
+
+            <FilterLabel>
+              Breach Status:
+              <Select value={filterBreach} onChange={(e) => setFilterBreach(e.target.value)}>
+                <option value="all">All</option>
+                <option value="safe">Safe</option>
+                <option value="breached">Breached</option>
+              </Select>
+            </FilterLabel>
+
+            <FilterLabel>
+              Age:
+              <Select value={filterAge} onChange={(e) => setFilterAge(e.target.value)}>
+                <option value="all">All</option>
+                <option value="recent">Less than 30 days</option>
+                <option value="moderate">30 - 90 days</option>
+                <option value="old">Older than 90 days</option>
+              </Select>
+            </FilterLabel>
+          </FilterGroup>
+
+          <ResultCount>
+            Showing {getFilteredCredentials().length} of {credentials.length} credentials
+          </ResultCount>
+        </SearchFilterSection>
+      )}
+
+      {getFilteredCredentials().length === 0 && credentials.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '2rem', color: '#999' }}>
-          <p>No credentials saved yet. Add one above to get started!</p>
+          <p>No credentials match your search and filters. Try adjusting your criteria!</p>
         </div>
       ) : (
         <CredentialsList>
-          {credentials.map(credential => (
+          {getFilteredCredentials().map(credential => (
             <CredentialCard key={credential.id}>
               {editingId === credential.id ? (
                 // Edit Mode
@@ -518,6 +735,14 @@ function Credentials() {
                 <>
                   <CredentialHeader>
                     <WebsiteName>{credential.website_name}</WebsiteName>
+                    <div>
+                      <StrengthBadge strength={calculatePasswordStrength(credential.password)}>
+                        {calculatePasswordStrength(credential.password)}
+                      </StrengthBadge>
+                      <BreachBadge breached={credential.breach_status === true}>
+                        {credential.breach_status === true ? '⚠️ Breached' : '✅ Safe'}
+                      </BreachBadge>
+                    </div>
                   </CredentialHeader>
 
                   <CredentialField>
