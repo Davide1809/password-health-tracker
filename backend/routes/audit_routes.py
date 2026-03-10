@@ -68,7 +68,6 @@ def scan_credentials():
                 }
             }), 200
 
-        analyzer = PasswordAnalyzer()
         weak_passwords = []
         strong_passwords = []
         breached_passwords = []
