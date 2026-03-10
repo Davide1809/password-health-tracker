@@ -330,23 +330,6 @@ const calculatePasswordStrength = (password) => {
   return 'Very Strong';
 };
 
-// Helper function to calculate days since creation
-const getDaysSinceCreation = (createdDate) => {
-  if (!createdDate) return null;
-  const created = new Date(createdDate);
-  const now = new Date();
-  return Math.floor((now - created) / (1000 * 60 * 60 * 24));
-};
-
-// Helper function to get breach status
-const getAgeCategory = (createdDate) => {
-  const days = getDaysSinceCreation(createdDate);
-  if (days === null) return 'unknown';
-  if (days <= 30) return 'recent';
-  if (days <= 90) return 'moderate';
-  return 'old';
-};
-
 function Credentials() {
   const [credentials, setCredentials] = useState([]);
   const [formData, setFormData] = useState({
@@ -363,7 +346,6 @@ function Credentials() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStrength, setFilterStrength] = useState('all');
   const [filterBreach, setFilterBreach] = useState('all');
-  const [filterAge, setFilterAge] = useState('all');
   const token = localStorage.getItem('token');
 
   // Fetch credentials on mount
@@ -533,12 +515,6 @@ function Credentials() {
         if (filterBreach === 'safe' && isBreached) return false;
       }
 
-      // Age filter
-      if (filterAge !== 'all') {
-        const ageCategory = getAgeCategory(credential.created_date);
-        if (filterAge !== ageCategory) return false;
-      }
-
       return true;
     });
   };
@@ -651,16 +627,6 @@ function Credentials() {
                 <option value="all">All</option>
                 <option value="safe">Safe</option>
                 <option value="breached">Breached</option>
-              </Select>
-            </FilterLabel>
-
-            <FilterLabel>
-              Age:
-              <Select value={filterAge} onChange={(e) => setFilterAge(e.target.value)}>
-                <option value="all">All</option>
-                <option value="recent">Less than 30 days</option>
-                <option value="moderate">30 - 90 days</option>
-                <option value="old">Older than 90 days</option>
               </Select>
             </FilterLabel>
           </FilterGroup>

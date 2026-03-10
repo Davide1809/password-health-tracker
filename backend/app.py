@@ -16,7 +16,8 @@ from routes import (
     breach_routes,
     ai_routes,
     credentials_routes,
-    security_questions_routes
+    security_questions_routes,
+    audit_routes
 )
 from utils import email_sender
 
@@ -78,6 +79,8 @@ auth_routes.set_mongo(mongo)
 auth_routes.set_limiter(limiter)
 credentials_routes.set_mongo(mongo)
 security_questions_routes.set_mongo(mongo)
+audit_routes.set_mongo(mongo)
+audit_routes.set_limiter(limiter)
 
 # Register blueprints with error handling
 try:
@@ -104,6 +107,10 @@ try:
     app.register_blueprint(security_questions_routes.bp)
 except Exception as e:
     logger.warning(f"Could not register security questions routes: {e}")
+try:
+    app.register_blueprint(audit_routes.bp)
+except Exception as e:
+    logger.warning(f"Could not register audit routes: {e}")
 
 @app.route('/api/health', methods=['GET'])
 def health_check():

@@ -3,6 +3,8 @@ import styled from 'styled-components';
 import axios from 'axios';
 import { getApiBase } from '../config';
 import Credentials from '../components/Credentials';
+import SecurityAudit from '../components/SecurityAudit';
+import AnalyticsDashboard from '../components/AnalyticsDashboard';
 
 const Container = styled.div`
   max-width: 1200px;
@@ -240,6 +242,10 @@ function Dashboard() {
       </Card>
 
       <Credentials />
+
+      <AnalyticsDashboard />
+
+      <SecurityAudit />
 
       <DangerZone>
         <h3>⚠️ Danger Zone</h3>
