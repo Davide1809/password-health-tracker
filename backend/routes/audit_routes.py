@@ -5,6 +5,9 @@ Endpoints for scanning and auditing password security
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 from utils.password_analyzer import analyze_password_strength
+import jwt
+import os
+from bson.objectid import ObjectId
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,18 +38,24 @@ def scan_credentials():
         if not auth_header:
             return jsonify({'error': 'Missing authorization header'}), 401
 
-        # Get user from token (assuming it's handled by auth middleware)
-        # For now, we'll extract from request
-        from utils.auth_helper import verify_token
+        # Extract and verify token
         token = auth_header.split('Bearer ')[-1]
-        user_id = verify_token(token)
-
-        if not user_id:
+        jwt_secret = os.environ.get('JWT_SECRET_KEY', 'dev-secret-key')
+        
+        try:
+            payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token expired'}), 401
+        except jwt.InvalidTokenError:
             return jsonify({'error': 'Invalid token'}), 401
+
+        user_id = payload.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'Invalid token payload'}), 401
 
         # Get all credentials
         db = mongo.db
-        credentials = list(db.credentials.find({'user_id': user_id}))
+        credentials = list(db.credentials.find({'user_id': ObjectId(user_id)}))
 
         if not credentials:
             return jsonify({
